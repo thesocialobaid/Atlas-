@@ -18,33 +18,54 @@ export type Database = {
     Tables: {
       analyses: {
         Row: {
+          adapter: string | null
           commit_sha: string | null
+          coverage: Json | null
           created_at: string
           error: string | null
           finished_at: string | null
           id: string
+          links_skipped: number | null
           org_id: string
+          parser_version: number | null
+          progressed_at: string | null
           project_id: string
+          stage: string | null
+          stage_message: string | null
           status: string
         }
         Insert: {
+          adapter?: string | null
           commit_sha?: string | null
+          coverage?: Json | null
           created_at?: string
           error?: string | null
           finished_at?: string | null
           id?: string
+          links_skipped?: number | null
           org_id: string
+          parser_version?: number | null
+          progressed_at?: string | null
           project_id: string
+          stage?: string | null
+          stage_message?: string | null
           status?: string
         }
         Update: {
+          adapter?: string | null
           commit_sha?: string | null
+          coverage?: Json | null
           created_at?: string
           error?: string | null
           finished_at?: string | null
           id?: string
+          links_skipped?: number | null
           org_id?: string
+          parser_version?: number | null
+          progressed_at?: string | null
           project_id?: string
+          stage?: string | null
+          stage_message?: string | null
           status?: string
         }
         Relationships: [
@@ -201,21 +222,48 @@ export type Database = {
       files: {
         Row: {
           analysis_id: string
+          bytes: number
+          folder: string
+          had_syntax_errors: boolean | null
           id: string
+          language: string
+          lines: number | null
+          module: string | null
           org_id: string
           path: string
+          sha256: string
+          skip_reason: string | null
+          status: string
         }
         Insert: {
           analysis_id: string
+          bytes: number
+          folder: string
+          had_syntax_errors?: boolean | null
           id?: string
+          language: string
+          lines?: number | null
+          module?: string | null
           org_id: string
           path: string
+          sha256: string
+          skip_reason?: string | null
+          status: string
         }
         Update: {
           analysis_id?: string
+          bytes?: number
+          folder?: string
+          had_syntax_errors?: boolean | null
           id?: string
+          language?: string
+          lines?: number | null
+          module?: string | null
           org_id?: string
           path?: string
+          sha256?: string
+          skip_reason?: string | null
+          status?: string
         }
         Relationships: [
           {
@@ -227,6 +275,64 @@ export type Database = {
           },
           {
             foreignKeyName: "files_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      imports: {
+        Row: {
+          analysis_id: string
+          from_file_id: string
+          id: string
+          kind: string
+          line: number
+          org_id: string
+          outcome: string
+          reason: string
+          specifier: string
+        }
+        Insert: {
+          analysis_id: string
+          from_file_id: string
+          id?: string
+          kind: string
+          line: number
+          org_id: string
+          outcome: string
+          reason: string
+          specifier: string
+        }
+        Update: {
+          analysis_id?: string
+          from_file_id?: string
+          id?: string
+          kind?: string
+          line?: number
+          org_id?: string
+          outcome?: string
+          reason?: string
+          specifier?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "imports_analysis_id_org_id_fkey"
+            columns: ["analysis_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "analyses"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "imports_from_file_id_org_id_fkey"
+            columns: ["from_file_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "files"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "imports_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"

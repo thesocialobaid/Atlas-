@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { OUTPUT_VERSION } from "./types.ts";
-import type { Edge, ImportRecord, ParseResult, RepoFile, SkipReason } from "./types.ts";
+import type { Coverage, Edge, ImportRecord, ParseResult, RepoFile, SkipReason } from "./types.ts";
 
 // Reading a result back checks every field rather than trusting a cast, so a
-// stale or hand-edited file fails here, loudly, instead of downstream.
+// stale or hand-edited file fails here, loudly, instead of downstream. The
+// same checks apply to rows read back from the database.
 
 class ShapeError extends Error {}
 
@@ -32,7 +33,7 @@ function isSkipReason(v: string): v is SkipReason {
 const KINDS = ["import", "re-export", "dynamic", "include", "module-declaration", "reference"] as const;
 const OUTCOMES = ["resolved", "external", "excluded", "unresolved"] as const;
 
-function file(v: unknown, w: string): RepoFile {
+export function parseRepoFile(v: unknown, w: string): RepoFile {
   const o = obj(v, w);
   const status = oneOf(o.status, ["parsed", "skipped"] as const, `${w}.status`);
   const reasonText = strOrNull(o.skipReason, `${w}.skipReason`);
@@ -54,7 +55,7 @@ function file(v: unknown, w: string): RepoFile {
   };
 }
 
-function importRecord(v: unknown, w: string): ImportRecord {
+export function parseImportRecord(v: unknown, w: string): ImportRecord {
   const o = obj(v, w);
   const outcome = oneOf(o.outcome, OUTCOMES, `${w}.outcome`);
   const reason = strOrNull(o.reason, `${w}.reason`);
@@ -70,7 +71,7 @@ function importRecord(v: unknown, w: string): ImportRecord {
   };
 }
 
-function edge(v: unknown, w: string): Edge {
+export function parseEdge(v: unknown, w: string): Edge {
   const o = obj(v, w);
   return { from: str(o.from, `${w}.from`), to: str(o.to, `${w}.to`), kind: oneOf(o.kind, KINDS, `${w}.kind`) };
 }
@@ -79,14 +80,13 @@ export function readParseResult(path: string): ParseResult {
   const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
   const o = obj(raw, "result");
   if (o.version !== OUTPUT_VERSION) fail("result.version", `${OUTPUT_VERSION}`);
-  const files = arr(o.files, "files").map((f, i) => file(f, `files[${i}]`));
+  const files = arr(o.files, "files").map((f, i) => parseRepoFile(f, `files[${i}]`));
   const paths = new Set(files.map((f) => f.path));
-  const edges = arr(o.edges, "edges").map((e, i) => edge(e, `edges[${i}]`));
+  const edges = arr(o.edges, "edges").map((e, i) => parseEdge(e, `edges[${i}]`));
   // The rule everything rests on: an edge only joins two real nodes.
   edges.forEach((e, i) => {
     if (!paths.has(e.from) || !paths.has(e.to)) fail(`edges[${i}]`, "both ends to be files in the result");
   });
-  const cov = obj(o.coverage, "coverage");
   const result: ParseResult = {
     version: OUTPUT_VERSION,
     root: str(o.root, "root"),
@@ -94,54 +94,61 @@ export function readParseResult(path: string): ParseResult {
     fileSource: oneOf(o.fileSource, ["git", "walk"] as const, "fileSource"),
     adapter: str(o.adapter, "adapter"),
     files,
-    imports: arr(o.imports, "imports").map((r, i) => importRecord(r, `imports[${i}]`)),
+    imports: arr(o.imports, "imports").map((r, i) => parseImportRecord(r, `imports[${i}]`)),
     edges,
     fan: arr(o.fan, "fan").map((f, i) => {
       const x = obj(f, `fan[${i}]`);
       return { path: str(x.path, `fan[${i}].path`), fanIn: num(x.fanIn, `fan[${i}].fanIn`), fanOut: num(x.fanOut, `fan[${i}].fanOut`) };
     }),
-    coverage: {
-      filesFound: num(cov.filesFound, "coverage.filesFound"),
-      filesParsed: num(cov.filesParsed, "coverage.filesParsed"),
-      filesSkipped: num(cov.filesSkipped, "coverage.filesSkipped"),
-      skipped: arr(cov.skipped, "coverage.skipped").map((s, i) => {
-        const x = obj(s, `coverage.skipped[${i}]`);
-        return {
-          reason: str(x.reason, `coverage.skipped[${i}].reason`),
-          count: num(x.count, `coverage.skipped[${i}].count`),
-          examples: arr(x.examples, `coverage.skipped[${i}].examples`).map((e, j) => str(e, `coverage.skipped[${i}].examples[${j}]`)),
-        };
-      }),
-      folders: num(cov.folders, "coverage.folders"),
-      imports: (() => {
-        const x = obj(cov.imports, "coverage.imports");
-        return {
-          resolved: num(x.resolved, "coverage.imports.resolved"),
-          external: num(x.external, "coverage.imports.external"),
-          excluded: num(x.excluded, "coverage.imports.excluded"),
-          unresolved: num(x.unresolved, "coverage.imports.unresolved"),
-        };
-      })(),
-      byKind: arr(cov.byKind, "coverage.byKind").map((k, i) => {
-        const x = obj(k, `coverage.byKind[${i}]`);
-        return { kind: oneOf(x.kind, KINDS, `coverage.byKind[${i}].kind`), seen: num(x.seen, "seen"), resolved: num(x.resolved, "resolved") };
-      }),
-      reasons: arr(cov.reasons, "coverage.reasons").map((r, i) => {
-        const x = obj(r, `coverage.reasons[${i}]`);
-        return {
-          outcome: oneOf(x.outcome, ["external", "excluded", "unresolved"] as const, `coverage.reasons[${i}].outcome`),
-          reason: str(x.reason, `coverage.reasons[${i}].reason`),
-          count: num(x.count, `coverage.reasons[${i}].count`),
-          examples: arr(x.examples, `coverage.reasons[${i}].examples`).map((e, j) => {
-            const y = obj(e, `coverage.reasons[${i}].examples[${j}]`);
-            return { from: str(y.from, "from"), specifier: str(y.specifier, "specifier"), line: num(y.line, "line") };
-          }),
-        };
-      }),
-    },
+    coverage: parseCoverage(o.coverage),
   };
-  if (result.coverage.filesFound !== result.coverage.filesParsed + result.coverage.filesSkipped) {
+  return result;
+}
+
+/** The coverage summary, checked field by field. */
+export function parseCoverage(v: unknown): Coverage {
+  const cov = obj(v, "coverage");
+  const coverage: Coverage = {
+  filesFound: num(cov.filesFound, "coverage.filesFound"),
+  filesParsed: num(cov.filesParsed, "coverage.filesParsed"),
+  filesSkipped: num(cov.filesSkipped, "coverage.filesSkipped"),
+  skipped: arr(cov.skipped, "coverage.skipped").map((s, i) => {
+    const x = obj(s, `coverage.skipped[${i}]`);
+    return {
+      reason: str(x.reason, `coverage.skipped[${i}].reason`),
+      count: num(x.count, `coverage.skipped[${i}].count`),
+      examples: arr(x.examples, `coverage.skipped[${i}].examples`).map((e, j) => str(e, `coverage.skipped[${i}].examples[${j}]`)),
+    };
+  }),
+  folders: num(cov.folders, "coverage.folders"),
+  imports: (() => {
+    const x = obj(cov.imports, "coverage.imports");
+    return {
+      resolved: num(x.resolved, "coverage.imports.resolved"),
+      external: num(x.external, "coverage.imports.external"),
+      excluded: num(x.excluded, "coverage.imports.excluded"),
+      unresolved: num(x.unresolved, "coverage.imports.unresolved"),
+    };
+  })(),
+  byKind: arr(cov.byKind, "coverage.byKind").map((k, i) => {
+    const x = obj(k, `coverage.byKind[${i}]`);
+    return { kind: oneOf(x.kind, KINDS, `coverage.byKind[${i}].kind`), seen: num(x.seen, "seen"), resolved: num(x.resolved, "resolved") };
+  }),
+  reasons: arr(cov.reasons, "coverage.reasons").map((r, i) => {
+    const x = obj(r, `coverage.reasons[${i}]`);
+    return {
+      outcome: oneOf(x.outcome, ["external", "excluded", "unresolved"] as const, `coverage.reasons[${i}].outcome`),
+      reason: str(x.reason, `coverage.reasons[${i}].reason`),
+      count: num(x.count, `coverage.reasons[${i}].count`),
+      examples: arr(x.examples, `coverage.reasons[${i}].examples`).map((e, j) => {
+        const y = obj(e, `coverage.reasons[${i}].examples[${j}]`);
+        return { from: str(y.from, "from"), specifier: str(y.specifier, "specifier"), line: num(y.line, "line") };
+      }),
+    };
+  }),
+};
+  if (coverage.filesFound !== coverage.filesParsed + coverage.filesSkipped) {
     fail("coverage", "filesFound = filesParsed + filesSkipped");
   }
-  return result;
+  return coverage;
 }

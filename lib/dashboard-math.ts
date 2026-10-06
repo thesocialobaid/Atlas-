@@ -43,3 +43,22 @@ export function ago(iso: string, now: Date) {
   if (hours < 24) return `${hours} h ago`;
   return `${Math.floor(hours / 24)} d ago`;
 }
+
+/**
+ * Nothing runs an analysis on a queue or a timer, so a server that stops
+ * mid-run leaves a row saying "running" forever. A run that hasn't reported
+ * progress for this long is shown as stale. It's measured from the last
+ * report, not the start: a large repository can take longer than this in
+ * total while still moving. Parsing is one step that reports only when it
+ * ends, so this is generous.
+ */
+export const STALE_MINUTES = 10;
+
+export function isStale(
+  row: { status: string; created_at: string; progressed_at: string | null },
+  now: Date,
+): boolean {
+  if (row.status !== "queued" && row.status !== "running") return false;
+  const last = Date.parse(row.progressed_at ?? row.created_at);
+  return now.getTime() - last > STALE_MINUTES * 60_000;
+}

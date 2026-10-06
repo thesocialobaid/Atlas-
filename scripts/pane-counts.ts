@@ -1,4 +1,4 @@
-// node scripts/pane-counts.ts
+// node scripts/pane-counts.ts <repository folder>
 //
 // The phase 5 numbers: what the overview says, and for every file, that the
 // pane's import and dependent lists agree with the parser's own fan counts.
@@ -6,7 +6,16 @@
 import { describeFile, describeFolder, summarise } from "../lib/map/detail.ts";
 import { fold } from "../lib/map/fold.ts";
 import { fileEdges } from "../lib/map/view.ts";
-import { preview as result } from "../lib/preview/data.ts";
+import { parseRepository } from "../parser/index.ts";
+
+// A repository folder in, parsed by the real parser: the same output the
+// pipeline stores.
+const dir = process.argv[2];
+if (!dir) {
+  console.error("usage: node scripts/pane-counts.ts <repository folder>");
+  process.exit(1);
+}
+const result = await parseRepository(dir);
 
 const s = summarise(result);
 console.log(`framework ${s.framework ?? "none"}, files ${s.files}, imports ${s.imports}, unidentified ${s.unidentified}`);

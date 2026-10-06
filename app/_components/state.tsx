@@ -1,10 +1,12 @@
 // The one place an analysis state gets a colour. Blue is done, red has failed,
-// grey is still waiting or working.
+// grey is still waiting or working. Stale is a hollow ring: it isn't a state
+// the row records, it's a run that stopped reporting and never will finish.
 const STYLE: Record<string, { dot: string; label: string }> = {
   complete: { dot: "bg-accent", label: "Complete" },
   failed: { dot: "bg-danger", label: "Failed" },
   running: { dot: "bg-fg-muted", label: "Running" },
   queued: { dot: "bg-border", label: "Queued" },
+  stale: { dot: "border border-fg-muted bg-transparent", label: "Stale" },
 };
 
 export function stateLabel(state: string) {

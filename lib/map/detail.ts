@@ -2,9 +2,10 @@
 // Pure, so every number in the pane can be checked from a script, and so a
 // selection never needs a request: it's all arithmetic over what's loaded.
 
-import type { ImportOutcome, ParseResult, RepoFile } from "../../parser/types.ts";
+import type { ImportOutcome, RepoFile } from "../../parser/types.ts";
 import { CATEGORIES, categoryOf, type Category } from "./categories.ts";
 import type { Fold } from "./fold.ts";
+import type { MapInput } from "./input.ts";
 import type { FileEdge } from "./view.ts";
 
 export type Ranked = { path: string; category: Category; count: number };
@@ -28,7 +29,7 @@ export type Summary = {
 
 const byCountThenPath = (a: Ranked, b: Ranked) => b.count - a.count || (a.path < b.path ? -1 : 1);
 
-export function summarise(result: ParseResult): Summary {
+export function summarise(result: MapInput): Summary {
   const fan = new Map(result.fan.map((f) => [f.path, f]));
   const ranked = (f: RepoFile, count: number): Ranked => ({ path: f.path, category: categoryOf(f), count });
 
@@ -36,7 +37,9 @@ export function summarise(result: ParseResult): Summary {
     // "none" is the fallback adapter's name: no framework recognised.
     framework: result.adapter === "none" ? null : result.adapter,
     files: result.files.length,
-    imports: result.imports.length,
+    // Every import seen, resolved or not, from coverage: resolved imports
+    // aren't kept one by one, only as the edges they became.
+    imports: Object.values(result.coverage.imports).reduce((a, b) => a + b, 0),
     importsBy: result.coverage.imports,
     leanedOn: result.files
       .filter((f) => (fan.get(f.path)?.fanIn ?? 0) > 0)
@@ -66,7 +69,7 @@ export type FileDetail = {
 };
 
 export function describeFile(
-  result: ParseResult,
+  result: MapInput,
   files: ReadonlyMap<string, RepoFile>,
   edges: readonly FileEdge[],
   path: string,
