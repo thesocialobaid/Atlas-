@@ -39,10 +39,30 @@ export function useProgress(
     let retry: ReturnType<typeof setTimeout> | null = null;
     let drops = 0;
 
+    // One path for every way a channel is lost: the token couldn't be fetched,
+    // the join was refused, or the socket closed. Rejoin with a growing pause;
+    // report only once rejoining has failed repeatedly.
+    const dropped = (reason: string) => {
+      drops++;
+      if (drops > MAX_REJOINS) {
+        setLive({ state: "failed", reason });
+        return;
+      }
+      setLive({ state: "connecting" });
+      retry = setTimeout(() => void join(), 1000 * drops);
+    };
+
     const join = async () => {
       // Private channels are authorised by the token, which must be on the
       // socket before joining.
-      await supabase.realtime.setAuth();
+      try {
+        await supabase.realtime.setAuth();
+      } catch (e) {
+        if (cancelled) return;
+        console.warn(`[atlas] ${topic}: couldn't authorise`, e);
+        dropped(e instanceof Error ? e.message : "couldn't authorise");
+        return;
+      }
       if (cancelled) return;
       const channel = supabase.channel(topic, { config: { private: true } });
       current = channel;
@@ -62,15 +82,9 @@ export function useProgress(
         if (status !== "CHANNEL_ERROR" && status !== "TIMED_OUT" && status !== "CLOSED") return;
         // The reason is otherwise lost: the page only says the updates stopped.
         console.warn(`[atlas] ${topic}: ${status}`, err ?? "");
-        drops++;
         current = null;
         void supabase.removeChannel(channel);
-        if (drops > MAX_REJOINS) {
-          setLive({ state: "failed", reason: err?.message ?? status.toLowerCase().replace("_", " ") });
-          return;
-        }
-        setLive({ state: "connecting" });
-        retry = setTimeout(() => void join(), 1000 * drops);
+        dropped(err?.message ?? status.toLowerCase().replace("_", " "));
       });
     };
     void join();

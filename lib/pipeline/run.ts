@@ -105,6 +105,21 @@ export async function startAnalysis(
     .insert({ org_id: orgId, project_id: project.id })
     .select("id")
     .single();
+  // 23505: a simultaneous submission's analysis is already queued or running
+  // (one active analysis per project is a unique index). Send this request to
+  // that run rather than starting a second.
+  if (error?.code === "23505") {
+    const active = await db
+      .from("analyses")
+      .select("id")
+      .eq("project_id", project.id)
+      .eq("org_id", orgId)
+      .in("status", ["queued", "running"])
+      .limit(1);
+    if (active.error) failed("look up the analysis", active.error.message);
+    if (active.data[0]) return { analysisId: active.data[0].id, existing: true };
+    failed("create the analysis", "another run was starting and then couldn't be found");
+  }
   if (error) failed("create the analysis", error.message);
   return { analysisId: data.id, existing: false };
 }

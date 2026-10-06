@@ -20,6 +20,14 @@ const NAME = /^[A-Za-z0-9._-]{1,100}$/;
 /** Bigger than this and the download stops: it's not a repository to read. */
 export const MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
 
+/**
+ * The archive limit counts compressed bytes, and repetitive content compresses
+ * to almost nothing: a small archive can unpack to gigabytes. What's written
+ * to disk is limited separately, by size and by number of files.
+ */
+export const MAX_UNPACKED_BYTES = 1024 * 1024 * 1024;
+export const MAX_UNPACKED_FILES = 200_000;
+
 /** A failure whose message is written for the person who pasted the URL. */
 export class RunError extends Error {}
 
@@ -125,19 +133,32 @@ export async function downloadArchive(ref: RepoRef, sha: string, dir: string): P
   });
 
   let links = 0;
-  await pipeline(
-    Readable.fromWeb(res.body as WebReadableStream<Uint8Array>),
-    limit,
-    extract({
-      cwd: dir,
-      strip: 1,
-      filter: (_path, entry) => {
-        const type = "type" in entry ? entry.type : null;
-        if (type === "File" || type === "OldFile" || type === "ContiguousFile" || type === "Directory") return true;
-        if (type === "SymbolicLink" || type === "Link") links++;
-        return false;
-      },
-    }),
-  );
+  let unpackedBytes = 0;
+  let unpackedFiles = 0;
+  // Each entry's size is in its header, so the total is known before its bytes
+  // are written; the unpack stops the moment it would pass a limit.
+  const unpack = extract({
+    cwd: dir,
+    strip: 1,
+    filter: (_path, entry) => {
+      const type = "type" in entry ? entry.type : null;
+      if (type === "File" || type === "OldFile" || type === "ContiguousFile" || type === "Directory") {
+        unpackedBytes += entry.size;
+        unpackedFiles++;
+        if (unpackedBytes > MAX_UNPACKED_BYTES || unpackedFiles > MAX_UNPACKED_FILES) {
+          unpack.abort(
+            new RunError(
+              `The repository unpacks to more than ${MAX_UNPACKED_BYTES / 1024 / 1024 / 1024} GB or ${MAX_UNPACKED_FILES.toLocaleString("en-US")} files.`,
+            ),
+          );
+          return false;
+        }
+        return true;
+      }
+      if (type === "SymbolicLink" || type === "Link") links++;
+      return false;
+    },
+  });
+  await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), limit, unpack);
   return { links };
 }
