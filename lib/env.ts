@@ -9,6 +9,8 @@ const REQUIRED = [
   "NEXT_PUBLIC_CLERK_SIGN_UP_URL",
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  // Server-only. The analysis pipeline writes with it; nothing reads with it.
+  "SUPABASE_SECRET_KEY",
 ] as const;
 
 type Env = Record<(typeof REQUIRED)[number], string>;
@@ -33,5 +35,6 @@ export function readEnv(): Env {
     NEXT_PUBLIC_CLERK_SIGN_UP_URL: required("NEXT_PUBLIC_CLERK_SIGN_UP_URL"),
     NEXT_PUBLIC_SUPABASE_URL: required("NEXT_PUBLIC_SUPABASE_URL"),
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: required("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
+    SUPABASE_SECRET_KEY: required("SUPABASE_SECRET_KEY"),
   };
 }
