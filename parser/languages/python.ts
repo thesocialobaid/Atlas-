@@ -5,9 +5,12 @@ import type { ImportRecord } from "../types.ts";
 import { lineOf, parserFor } from "./tree-sitter.ts";
 import type { SyntaxNode } from "./tree-sitter.ts";
 
-// Absolute imports are looked up from the repository root, and from src/ when
-// it exists: the two layouts Python packaging documents. A name found in
-// neither is outside the repository (standard library or an installed package).
+// Absolute imports are looked up first in the importing file's own folder,
+// because running a file as a script puts its folder at the front of
+// sys.path, so `import config` beside config.py loads that file. Then from the
+// repository root, and from src/ when it exists: the two layouts Python
+// packaging documents. A name found in none of these is outside the
+// repository (standard library or an installed package).
 
 function moduleName(path: string, roots: string[]): string | null {
   for (const root of roots) {
@@ -50,7 +53,7 @@ export const python: LanguageHandler = {
       for (const node of tree.rootNode.descendantsOfType("import_statement")) {
         for (const name of node.childrenForFieldName("name")) {
           const dotted = (name.type === "aliased_import" ? name.childForFieldName("name") : name)?.text;
-          if (dotted) out.push(absolute(ctx, roots, file.path, dotted, lineOf(node)));
+          if (dotted) out.push(absolute(ctx, [here, ...roots], file.path, dotted, lineOf(node)));
         }
       }
 
@@ -72,7 +75,7 @@ export const python: LanguageHandler = {
           out.push(...fromImport(ctx, file.path, moduleNode.text, base, rest, names, line));
         } else {
           const dotted = moduleNode.text;
-          const root = roots.find((r) => exists(ctx, candidates(r, dotted.split(".")[0])) !== null);
+          const root = [here, ...roots].find((r) => exists(ctx, candidates(r, dotted.split(".")[0])) !== null);
           if (root === undefined) {
             out.push(record.external(file.path, dotted, "import", line, "not a module in this repository (standard library or installed package)"));
             continue;
