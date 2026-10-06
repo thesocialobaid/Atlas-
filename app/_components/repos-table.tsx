@@ -1,4 +1,6 @@
-import { ago, formatSeconds, seconds } from "@/lib/dashboard-math";
+import Link from "next/link";
+import { ago, formatSeconds, isStale, seconds } from "@/lib/dashboard-math";
+import { isStage, STAGE_LABEL } from "@/lib/pipeline/stages";
 import type { Dashboard } from "@/lib/analyses";
 import { Card, EmptyNote } from "./card";
 import { StateBadge } from "./state";
@@ -28,13 +30,29 @@ export function ReposTable({ repos, now }: { repos: Dashboard["repos"]; now: Dat
                     className="border-b border-border transition-colors duration-150 last:border-0 hover:bg-surface-2"
                   >
                     <td className="px-5 py-3">
-                      <span className="font-mono text-[13px]">
-                        <span className="text-fg-muted">{repo.repo_owner}/</span>
-                        {repo.repo_name}
-                      </span>
+                      {latest ? (
+                        <Link href={`/analyses/${latest.id}`} className="font-mono text-[13px] hover:underline">
+                          <span className="text-fg-muted">{repo.repo_owner}/</span>
+                          {repo.repo_name}
+                        </Link>
+                      ) : (
+                        <span className="font-mono text-[13px]">
+                          <span className="text-fg-muted">{repo.repo_owner}/</span>
+                          {repo.repo_name}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-3">
-                      {latest ? <StateBadge state={latest.status} /> : <span className="text-xs text-fg-muted">Never analysed</span>}
+                      {latest ? (
+                        <span className="inline-flex items-center gap-2">
+                          <StateBadge state={isStale(latest, now) ? "stale" : latest.status} />
+                          {latest.status === "running" && isStage(latest.stage) && !isStale(latest, now) && (
+                            <span className="text-xs text-fg-muted">{STAGE_LABEL[latest.stage]}</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-fg-muted">Never analysed</span>
+                      )}
                     </td>
                     <td className="px-3 py-3 text-xs text-fg-muted">
                       {latest ? <time dateTime={latest.created_at}>{ago(latest.created_at, now)}</time> : "—"}

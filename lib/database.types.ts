@@ -28,8 +28,10 @@ export type Database = {
           links_skipped: number | null
           org_id: string
           parser_version: number | null
+          progressed_at: string | null
           project_id: string
           stage: string | null
+          stage_message: string | null
           status: string
         }
         Insert: {
@@ -43,8 +45,10 @@ export type Database = {
           links_skipped?: number | null
           org_id: string
           parser_version?: number | null
+          progressed_at?: string | null
           project_id: string
           stage?: string | null
+          stage_message?: string | null
           status?: string
         }
         Update: {
@@ -58,8 +62,10 @@ export type Database = {
           links_skipped?: number | null
           org_id?: string
           parser_version?: number | null
+          progressed_at?: string | null
           project_id?: string
           stage?: string | null
+          stage_message?: string | null
           status?: string
         }
         Relationships: [

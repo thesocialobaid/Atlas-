@@ -8,10 +8,11 @@ import { fold } from "@/lib/map/fold";
 import { insights as findInsights, reach as walk, type Direction } from "@/lib/map/graph";
 import { fileEdges } from "@/lib/map/view";
 import type { Theme } from "@/lib/theme";
-import type { ParseResult } from "@/parser/types";
+import type { MapInput } from "@/lib/map/input";
 import { Logo } from "../icons";
 import { ThemeControl } from "../../theme-control";
 import { MapCanvas, type Base } from "./canvas";
+import { CoverageBanner } from "./coverage-banner";
 import { DetailPane, type Tab } from "./pane";
 import { HoverContext, type Hover, type Selection } from "./state";
 
@@ -25,7 +26,7 @@ export function Workspace({
   theme,
 }: {
   name: string;
-  result: ParseResult;
+  result: MapInput;
   theme: Theme;
 }) {
   // Derived from the parser's output, never written back into it.
@@ -169,17 +170,20 @@ export function Workspace({
         </div>
       </aside>
 
-      <main className="relative min-h-0 bg-bg">
-        <MapCanvas
-          base={base}
-          open={open}
-          category={category}
-          selection={selection}
-          onOpen={openFolder}
-          onClose={closeFolder}
-          onSelectFile={toggleFile}
-          onClear={clear}
-        />
+      <main className="flex min-h-0 flex-col bg-bg">
+        <CoverageBanner coverage={result.coverage} />
+        <div className="relative min-h-0 flex-1">
+          <MapCanvas
+            base={base}
+            open={open}
+            category={category}
+            selection={selection}
+            onOpen={openFolder}
+            onClose={closeFolder}
+            onSelectFile={toggleFile}
+            onClear={clear}
+          />
+        </div>
       </main>
 
       <aside aria-label="Details" className="min-h-0 border-l border-border bg-surface">

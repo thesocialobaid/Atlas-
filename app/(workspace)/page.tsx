@@ -1,9 +1,12 @@
+import { auth } from "@clerk/nextjs/server";
 import { connection } from "next/server";
 import { getDashboard } from "@/lib/analyses";
 import { formatSeconds, median, perDay, seconds } from "@/lib/dashboard-math";
 import { Card, EmptyNote } from "../_components/card";
+import { AnalyseForm } from "../_components/analyse-form";
 import { DailyBars, DurationBars } from "../_components/charts";
 import { IntroCards } from "../_components/intro-cards";
+import { LiveDashboard } from "../_components/live-dashboard";
 import { ReposTable } from "../_components/repos-table";
 import { StatCard, Sparkline } from "../_components/stat-card";
 import { StateDot, stateLabel } from "../_components/state";
@@ -16,6 +19,7 @@ export default async function DashboardPage() {
   // A failed query throws to the error boundary rather than rendering as an
   // empty dashboard: "nothing yet" and "couldn't ask" must never look alike.
   const data = await getDashboard(now);
+  const { orgId } = await auth();
   const { counts } = data;
   const total = counts.queued + counts.running + counts.complete + counts.failed;
   const inProgress = counts.queued + counts.running;
@@ -36,6 +40,9 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       <Topbar title="Dashboard" />
+
+      <AnalyseForm />
+      {orgId && <LiveDashboard orgId={orgId} />}
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard

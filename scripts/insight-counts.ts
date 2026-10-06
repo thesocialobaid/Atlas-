@@ -1,14 +1,23 @@
-// node scripts/insight-counts.ts
+// node scripts/insight-counts.ts <repository folder>
 //
-// The phase 6 numbers. First the insights over the checked-in repository,
-// then the same functions over a small hand-made edge list whose answers are
-// known, because the checked-in repository has no import cycle to find.
+// The phase 6 numbers. First the insights over a repository parsed on the
+// spot, then the same functions over a small hand-made edge list whose
+// answers are known, since a real repository may have no cycle to find.
 
 import { CATEGORIES, categoryOf } from "../lib/map/categories.ts";
 import { fold } from "../lib/map/fold.ts";
 import { cycles, insights, reach } from "../lib/map/graph.ts";
 import { fileEdges } from "../lib/map/view.ts";
-import { preview as result } from "../lib/preview/data.ts";
+import { parseRepository } from "../parser/index.ts";
+
+// A repository folder in, parsed by the real parser: the same output the
+// pipeline stores.
+const dir = process.argv[2];
+if (!dir) {
+  console.error("usage: node scripts/insight-counts.ts <repository folder>");
+  process.exit(1);
+}
+const result = await parseRepository(dir);
 
 let failed = 0;
 const check = (label: string, ok: boolean) => {
@@ -28,7 +37,8 @@ const has = new Set(edges.map((e) => `${e.from}\n${e.to}`));
 const isLoop = (c: string[]) => c.every((p, i) => has.has(`${p}\n${c[(i + 1) % c.length]}`));
 check("every cycle found in the repository is a real loop", found.cycles.every(isLoop));
 
-const store = "src/state/store.ts";
+// The file the most things import: the walk with the most to check.
+const store = [...result.fan].sort((a, b) => b.fanIn - a.fanIn || (a.path < b.path ? -1 : 1))[0]?.path ?? "";
 const blast = reach(edges, store, "dependents");
 const chain = reach(edges, store, "dependencies");
 console.log(`\nblast radius of ${store}: ${blast.filter((r) => r.depth === 1).length} direct, ${blast.filter((r) => r.depth === 2).length} two steps away`);

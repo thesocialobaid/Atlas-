@@ -17,8 +17,9 @@ import { downloadArchive, parseRepoUrl, resolveCommit, RunError, type RepoRef } 
 
 export { RunError } from "./github.ts";
 
-export const STAGES = ["fetching", "selecting", "parsing", "storing"] as const;
-export type Stage = (typeof STAGES)[number];
+import type { Stage } from "./stages.ts";
+
+export { STAGES, type Stage } from "./stages.ts";
 
 /** Called as each stage begins, and with what it found as it ends. */
 export type OnStage = (stage: Stage, message: string) => void;
@@ -130,11 +131,13 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
   let stage: Stage = "fetching";
   let dir: string | null = null;
 
-  const enter = async (next: Stage, message: string) => {
+  // Every report is a row update, and every row update is published by the
+  // database to whoever is watching. The message is what the page shows.
+  const report = async (next: Stage, message: string) => {
     stage = next;
     const { error } = await db
       .from("analyses")
-      .update({ status: "running", stage: next })
+      .update({ status: "running", stage: next, stage_message: message, progressed_at: new Date().toISOString() })
       .eq("id", analysisId)
       .eq("org_id", orgId);
     if (error) failed(`record the ${next} stage`, error.message);
@@ -142,7 +145,7 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
   };
 
   try {
-    await enter("fetching", `Fetching github.com/${ref.owner}/${ref.name}`);
+    await report("fetching", `Fetching github.com/${ref.owner}/${ref.name}`);
     const { sha, ref: canonical } = await resolveCommit(ref);
     const commit = await db.from("analyses").update({ commit_sha: sha }).eq("id", analysisId).eq("org_id", orgId);
     if (commit.error) failed("record the commit", commit.error.message);
@@ -150,18 +153,18 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
     const { links } = await downloadArchive(canonical, sha, dir);
     const skipped = await db.from("analyses").update({ links_skipped: links }).eq("id", analysisId).eq("org_id", orgId);
     if (skipped.error) failed("record skipped links", skipped.error.message);
-    onStage("fetching", `Fetched ${sha.slice(0, 7)}${links ? `, ${links} symbolic ${links === 1 ? "link" : "links"} left out` : ""}`);
+    await report("fetching", `Fetched ${sha.slice(0, 7)}${links ? `, ${links} symbolic ${links === 1 ? "link" : "links"} left out` : ""}`);
 
-    await enter("selecting", "Listing the repository's files");
+    await report("selecting", "Listing the repository's files");
     const { paths } = listFiles(dir);
     if (paths.length === 0) throw new RunError("The repository has no files to read.");
-    onStage("selecting", `${paths.length} files`);
+    await report("selecting", `${paths.length} files`);
 
-    await enter("parsing", `Parsing ${paths.length} files`);
+    await report("parsing", `Parsing ${paths.length} files`);
     const result = await parseRepository(dir);
-    onStage("parsing", `${result.coverage.filesParsed} parsed, ${result.coverage.filesSkipped} skipped, ${result.edges.length} connections`);
+    await report("parsing", `${result.coverage.filesParsed} parsed, ${result.coverage.filesSkipped} skipped, ${result.edges.length} connections`);
 
-    await enter("storing", `Storing ${result.files.length} files and ${result.edges.length} connections`);
+    await report("storing", `Storing ${result.files.length} files and ${result.edges.length} connections`);
     await store(db, orgId, analysisId, result);
 
     const done = await db
@@ -169,6 +172,8 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
       .update({
         status: "complete",
         stage: null,
+        stage_message: `Mapped ${result.files.length} files and ${result.edges.length} connections`,
+        progressed_at: new Date().toISOString(),
         finished_at: new Date().toISOString(),
         coverage: result.coverage,
         adapter: result.adapter,
@@ -177,7 +182,7 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
       .eq("id", analysisId)
       .eq("org_id", orgId);
     if (done.error) failed("mark the analysis complete", done.error.message);
-    onStage("storing", "Stored");
+    onStage("storing", `Mapped ${result.files.length} files and ${result.edges.length} connections`);
   } catch (e) {
     const message =
       e instanceof RunError
@@ -186,7 +191,7 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
     // The stage stays as it was, so the row says where it stopped.
     const { error } = await db
       .from("analyses")
-      .update({ status: "failed", error: message, finished_at: new Date().toISOString() })
+      .update({ status: "failed", error: message, progressed_at: new Date().toISOString(), finished_at: new Date().toISOString() })
       .eq("id", analysisId)
       .eq("org_id", orgId);
     if (error) throw new Error(`The run failed (${message}) and the failure couldn't be recorded: ${error.message}`);

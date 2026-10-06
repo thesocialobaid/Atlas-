@@ -1,11 +1,20 @@
-// node scripts/map-counts.ts
+// node scripts/map-counts.ts <repository folder>
 //
 // The phase 4 counts, read straight off the folding and view code the canvas
-// uses, against the checked-in preview data.
+// uses, against a repository parsed on the spot.
 
 import { fold } from "../lib/map/fold.ts";
 import { buildView, fileEdges } from "../lib/map/view.ts";
-import { preview as result } from "../lib/preview/data.ts";
+import { parseRepository } from "../parser/index.ts";
+
+// A repository folder in, parsed by the real parser: the same output the
+// pipeline stores.
+const dir = process.argv[2];
+if (!dir) {
+  console.error("usage: node scripts/map-counts.ts <repository folder>");
+  process.exit(1);
+}
+const result = await parseRepository(dir);
 
 const folded = fold(result.files);
 const edges = fileEdges(result.edges);
