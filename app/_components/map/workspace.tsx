@@ -1,11 +1,16 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { categoryOf } from "@/lib/map/categories";
+import { CATEGORIES, CATEGORY_LABEL, categoryOf, type Category } from "@/lib/map/categories";
 import { describeFile, describeFolder, summarise } from "@/lib/map/detail";
 import { fold } from "@/lib/map/fold";
+import { insights as findInsights, reach as walk, type Direction } from "@/lib/map/graph";
 import { fileEdges } from "@/lib/map/view";
+import type { Theme } from "@/lib/theme";
 import type { ParseResult } from "@/parser/types";
+import { Logo } from "../icons";
+import { ThemeControl } from "../../theme-control";
 import { MapCanvas, type Base } from "./canvas";
 import { DetailPane, type Tab } from "./pane";
 import { HoverContext, type Hover, type Selection } from "./state";
@@ -14,7 +19,15 @@ import { HoverContext, type Hover, type Selection } from "./state";
 // and one hover, so they live here rather than in either. Everything the pane
 // shows is derived from the result already in the browser: selecting fires no
 // request.
-export function Workspace({ name, result }: { name: string; result: ParseResult }) {
+export function Workspace({
+  name,
+  result,
+  theme,
+}: {
+  name: string;
+  result: ParseResult;
+  theme: Theme;
+}) {
   // Derived from the parser's output, never written back into it.
   const base = useMemo<Base>(
     () => ({
@@ -27,6 +40,12 @@ export function Workspace({ name, result }: { name: string; result: ParseResult 
   );
   const files = useMemo(() => new Map(result.files.map((f) => [f.path, f])), [result]);
   const summary = useMemo(() => summarise(result), [result]);
+  const insights = useMemo(() => findInsights(result.files, base.edges), [result, base]);
+  const railCounts = useMemo(() => {
+    const counts = new Map<Category, number>();
+    for (const c of base.categories.values()) counts.set(c, (counts.get(c) ?? 0) + 1);
+    return counts;
+  }, [base]);
 
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [selection, setSelection] = useState<Selection>(null);
@@ -34,6 +53,10 @@ export function Workspace({ name, result }: { name: string; result: ParseResult 
   // Kept across selections: comparing three explanations shouldn't mean
   // reopening the tab three times.
   const [tab, setTab] = useState<Tab>("structure");
+  // Kept across selections for the same reason: comparing blast radii.
+  const [direction, setDirection] = useState<Direction | null>(null);
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [category, setCategory] = useState<Category | null>(null);
 
   // Every handler that swaps what's under the pointer clears the hover, since
   // the element that would have sent mouseleave is gone.
@@ -97,14 +120,60 @@ export function Workspace({ name, result }: { name: string; result: ParseResult 
     [selection, base, files],
   );
 
+  const reached = useMemo(
+    () => (selection?.kind === "file" && direction ? walk(base.edges, selection.path, direction) : null),
+    [selection, direction, base],
+  );
+
   const hoverApi = useMemo(() => ({ hover, setHover }), [hover]);
 
   return (
     <HoverContext.Provider value={hoverApi}>
+      <aside className="flex min-h-0 flex-col border-r border-border bg-surface">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3">
+          <Link href="/" title="Dashboard" className="shrink-0">
+            <Logo />
+          </Link>
+          <span className="truncate font-mono text-xs font-medium">{name}</span>
+        </div>
+        {/* Clicking a kind dims the rest of the map rather than removing it, so
+            the shape of the repository stays on screen. */}
+        <ul aria-label="Kinds of file" className="min-h-0 flex-1 overflow-y-auto py-2">
+          {CATEGORIES.filter((c) => railCounts.has(c)).map((c) => (
+            <li key={c}>
+              <button
+                type="button"
+                aria-pressed={category === c}
+                onClick={() => setCategory((cur) => (cur === c ? null : c))}
+                className={`flex h-7 w-full items-center gap-2 px-3 text-left text-xs ${
+                  category === c
+                    ? "bg-surface-2 font-medium"
+                    : category !== null
+                      ? "text-fg-muted hover:bg-surface-2 hover:text-fg"
+                      : "hover:bg-surface-2"
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className="size-2 shrink-0 rounded-[2px]"
+                  style={{ background: `var(--cat-${c})` }}
+                />
+                <span className="flex-1 truncate">{CATEGORY_LABEL[c]}</span>
+                <span className="font-mono text-[11px] tabular-nums text-fg-muted">{railCounts.get(c)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="shrink-0 border-t border-border p-2">
+          <ThemeControl initial={theme} />
+        </div>
+      </aside>
+
       <main className="relative min-h-0 bg-bg">
         <MapCanvas
           base={base}
           open={open}
+          category={category}
           selection={selection}
           onOpen={openFolder}
           onClose={closeFolder}
@@ -117,10 +186,16 @@ export function Workspace({ name, result }: { name: string; result: ParseResult 
         <DetailPane
           name={name}
           summary={summary}
+          insights={insights}
+          insightsOpen={insightsOpen}
+          onInsightsOpen={setInsightsOpen}
+          categories={base.categories}
           file={file}
           folder={folder}
           tab={tab}
           onTab={setTab}
+          reach={{ direction, found: reached }}
+          onReach={setDirection}
           onGo={goToFile}
           onClear={clear}
         />
