@@ -48,7 +48,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       data-theme={theme === "system" ? undefined : theme}
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="h-full">
+      {/* Extensions such as Grammarly add attributes to <body> before React
+          hydrates. This silences mismatches on body's own attributes only;
+          everything inside it is still checked. */}
+      <body className="h-full" suppressHydrationWarning>
         <ClerkProvider appearance={clerkAppearance}>{children}</ClerkProvider>
       </body>
     </html>
