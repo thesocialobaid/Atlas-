@@ -20,6 +20,15 @@
   --inverse: #18181b;
   --inverse-fg: #f4f4f5;
   --inverse-muted: #a1a1aa;
+  /* File kinds. Six hues kept clear of the accent, direction and danger
+     colours; "other" is grey because it isn't a kind. */
+  --cat-code: #6741c9;
+  --cat-styles: #c0367f;
+  --cat-markup: #0f7f86;
+  --cat-docs: #7a6a12;
+  --cat-config: #4b6584;
+  --cat-assets: #a3502a;
+  --cat-other: #a1a1aa;
 }
 
 /* No data-theme means follow the system; an explicit choice always wins. */
@@ -41,6 +50,13 @@
     --inverse: #1f2024;
     --inverse-fg: #ececef;
     --inverse-muted: #9b9ba6;
+    --cat-code: #a88cf5;
+    --cat-styles: #ef7fbb;
+    --cat-markup: #4cc4cb;
+    --cat-docs: #d1bd55;
+    --cat-config: #93a9c6;
+    --cat-assets: #e48c5e;
+    --cat-other: #5c5c66;
   }
 }
 
@@ -61,6 +77,13 @@
   --inverse: #1f2024;
   --inverse-fg: #ececef;
   --inverse-muted: #9b9ba6;
+  --cat-code: #a88cf5;
+  --cat-styles: #ef7fbb;
+  --cat-markup: #4cc4cb;
+  --cat-docs: #d1bd55;
+  --cat-config: #93a9c6;
+  --cat-assets: #e48c5e;
+  --cat-other: #5c5c66;
 }
 
 @theme inline {
@@ -79,6 +102,13 @@
   --color-inverse: var(--inverse);
   --color-inverse-fg: var(--inverse-fg);
   --color-inverse-muted: var(--inverse-muted);
+  --color-cat-code: var(--cat-code);
+  --color-cat-styles: var(--cat-styles);
+  --color-cat-markup: var(--cat-markup);
+  --color-cat-docs: var(--cat-docs);
+  --color-cat-config: var(--cat-config);
+  --color-cat-assets: var(--cat-assets);
+  --color-cat-other: var(--cat-other);
   --radius-card: 12px;
   --radius-control: 8px;
   --font-sans: var(--font-geist-sans);
