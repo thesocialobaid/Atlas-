@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { RepoFile, SkipReason } from "./types.ts";
 
@@ -46,16 +46,29 @@ export function languageOf(path: string): string {
   return BY_EXTENSION[ext] ?? ext;
 }
 
+/** Same folder on disk, whatever the spelling: separators, case on Windows, links. */
+function sameDir(a: string, b: string): boolean {
+  try {
+    const [x, y] = [realpathSync.native(a), realpathSync.native(b)];
+    return process.platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The repository's files. Inside a git work tree this is what git tracks plus
- * untracked files that aren't ignored, so .gitignore decides and nothing is
- * second-guessed. Outside git, every file except .git and node_modules.
+ * The repository's files. When the directory is the root of its own git work
+ * tree this is what git tracks plus untracked files that aren't ignored, so
+ * .gitignore decides and nothing is second-guessed. Otherwise, every file
+ * except .git and node_modules.
+ *
+ * Being merely inside some work tree isn't enough: an unpacked archive in a
+ * temporary folder can sit inside an unrelated repository (a home directory
+ * under version control), whose ignore rules would then decide what's read.
  */
 export function listFiles(root: string): { paths: string[]; source: "git" | "walk" } {
-  const inside = spawnSync("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], {
-    encoding: "utf8",
-  });
-  if (inside.status === 0 && inside.stdout.trim() === "true") {
+  const top = spawnSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  if (top.status === 0 && sameDir(top.stdout.trim(), root)) {
     const listed = spawnSync(
       "git",
       ["-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
