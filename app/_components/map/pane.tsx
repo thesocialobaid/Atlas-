@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { CATEGORY_LABEL, type Category } from "@/lib/map/categories";
 import type { FileDetail, FolderDetail, Ranked, Summary } from "@/lib/map/detail";
-import { INSIGHT_TEXT, LONG_LINES, type Direction, type Insights, type Reached } from "@/lib/map/graph";
+import { INSIGHT_TEXT, LONG_LINES, REACH_DEPTH, type Direction, type Insights, type Reached } from "@/lib/map/graph";
 import { useHover } from "./state";
 
 export type Tab = "structure" | "explanation";
@@ -401,10 +401,10 @@ const WALKS: { direction: Direction; label: string; hint: string; tick: "incomin
   },
 ];
 
-const STEPS: Record<Direction, [string, string]> = {
-  dependents: ["Import it directly", "Import one of those"],
-  dependencies: ["Imported directly", "Imported by one of those"],
-};
+const DIRECT: Record<Direction, string> = { dependents: "Import it directly", dependencies: "Imported directly" };
+
+/** Every level the walk returned, so the rows always add up to the count. */
+const levels = Array.from({ length: REACH_DEPTH }, (_, i) => i + 1);
 
 function ReachList({
   direction,
@@ -420,15 +420,16 @@ function ReachList({
   const walk = WALKS.find((w) => w.direction === direction)!;
   return (
     <section className="border-t border-border py-2">
-      <SectionHead title={walk.label} count={found.length} aside="two levels" tick={walk.tick} />
+      <SectionHead title={walk.label} count={found.length} aside={`${REACH_DEPTH} levels`} tick={walk.tick} />
       {found.length === 0 ? (
         <p className="px-3 py-1 text-xs text-fg-muted">
           {direction === "dependents" ? "Nothing in this repository imports it." : "It imports no file in this repository."}
         </p>
       ) : (
-        STEPS[direction].map((label, i) => {
-          const level = found.filter((r) => r.depth === i + 1);
+        levels.map((depth) => {
+          const level = found.filter((r) => r.depth === depth);
           if (level.length === 0) return null;
+          const label = depth === 1 ? DIRECT[direction] : `${depth} steps away`;
           return (
             <div key={label} className="mt-1">
               <p className="px-3 pb-0.5 text-[11px] leading-4 text-fg-muted">
@@ -523,7 +524,7 @@ function InsightsPanel({
               <p className="px-3 py-1 text-xs text-fg-muted">No file imports itself, directly or through others.</p>
             ) : (
               insights.cycles.map((loop) => (
-                <div key={loop.join(" ")} className="mb-1.5">
+                <div key={loop.join("\n")} className="mb-1.5">
                   {/* A real sequence: each file imports the next, and the last
                       imports the first. */}
                   <ol>

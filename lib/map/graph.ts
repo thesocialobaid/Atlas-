@@ -140,6 +140,9 @@ function loopThrough(component: string[], out: ReadonlyMap<string, string[]>): s
     for (const p of frontier) {
       for (const q of out.get(p)!) {
         if (!members.has(q)) continue;
+        // In a component of several files, the start importing itself would
+        // hide the loop through the others; that loop is the one to show.
+        if (q === start && p === start && component.length > 1) continue;
         if (q === start) {
           const loop = [p];
           while (loop[0] !== start) loop.unshift(parent.get(loop[0])!);
@@ -157,15 +160,15 @@ function loopThrough(component: string[], out: ReadonlyMap<string, string[]>): s
 }
 
 /** The four insights. Each kind's sentence is fixed; only the files vary. */
+/** Code files longer than this many lines are listed as long. */
+export const LONG_LINES = 500;
+
 export const INSIGHT_TEXT = {
   unimported: "Nothing in this repository imports this file.",
   heavy: "Imported by far more files than most files here.",
   cycle: "These files import each other in a loop.",
-  long: "Longer than 500 lines.",
+  long: `Longer than ${LONG_LINES} lines.`,
 } as const;
-
-/** Code files longer than this many lines are listed as long. */
-export const LONG_LINES = 500;
 
 /** However skewed the spread, fewer importers than this is never unusual. */
 const HEAVY_FLOOR = 5;

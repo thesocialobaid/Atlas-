@@ -115,9 +115,12 @@ function Canvas({ base, open, category, selection, onOpen, onClose, onSelectFile
         const out = selected !== null && e.pairs.some((p) => selected.has(p.from));
         const stroke = into ? "var(--incoming)" : out ? "var(--outgoing)" : "var(--fg-muted)";
         // Under the rail's filter a line stays only if one of its ends is of
-        // that kind, the same rule the boxes and rows follow.
+        // that kind, the same rule the boxes and rows follow. A selection's own
+        // lines always stay: they're what the pane is describing.
         const filteredOut =
           category !== null &&
+          !into &&
+          !out &&
           !e.pairs.some((p) => base.categories.get(p.from) === category || base.categories.get(p.to) === category);
         const opacity = filteredOut ? 0.08 : selected === null ? 0.45 : into || out ? 0.9 : 0.08;
         return {

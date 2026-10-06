@@ -36,12 +36,14 @@ console.log(`dependency chain of ${store}: ${chain.map((r) => `${r.path} (${r.de
 const importers = new Set(edges.filter((e) => e.to === store).map((e) => e.from));
 check("blast radius depth 1 is exactly the files that import it", blast.filter((r) => r.depth === 1).length === importers.size && blast.every((r) => r.depth !== 1 || importers.has(r.path)));
 
-// Rail counts against what the panels would show with every folder open.
+// Rail counts against what the panels would show with every folder open: a
+// file missing from the fold, or in two boxes, would make these disagree.
 const folded = fold(result.files);
+const kind = new Map(result.files.map((f) => [f.path, categoryOf(f)]));
 const railOk = CATEGORIES.every((c) => {
-  const rail = result.files.filter((f) => categoryOf(f) === c).length;
+  const rail = result.files.filter((f) => kind.get(f.path) === c).length;
   let panels = 0;
-  for (const paths of folded.groups.values()) panels += paths.filter((p) => categoryOf(result.files.find((f) => f.path === p)!) === c).length;
+  for (const paths of folded.groups.values()) panels += paths.filter((p) => kind.get(p) === c).length;
   return rail === panels;
 });
 check("each category's panel matches add up to the rail's count", railOk);
@@ -56,6 +58,9 @@ console.log(`cycles: ${plantedCycles.map((c) => c.join(" -> ")).join(" | ")}`);
 check("finds the planted three-file loop", plantedCycles.some((c) => c.join() === "a,b,c"));
 check("finds the file importing itself", plantedCycles.some((c) => c.join() === "e"));
 check("finds nothing else", plantedCycles.length === 2);
+
+const both = cycles(["p", "q"], [e("p", "p"), e("p", "q"), e("q", "p")]);
+check(`a file importing itself doesn't hide its loop with another (got ${both.map((c) => c.join(" -> ")).join(" | ")})`, both.length === 1 && both[0].join() === "p,q");
 
 const deep = Array.from({ length: 50_000 }, (_, i) => e(`n${i}`, `n${i + 1}`));
 deep.push(e("n50000", "n0"));

@@ -95,8 +95,10 @@ export function Panel({ data }: NodeProps<PanelNode>) {
   const matches = (p: string) => category === null || categories.get(p) === category;
   const matched = category === null ? 0 : group.files.filter(matches).length;
   // Something the pane points at is never left dimmed.
+  // The selected file is never dimmed either: the pane is describing it.
   const off = (paths: readonly string[]) =>
     !paneHovers(hover, paths) &&
+    (selected === null || !paths.includes(selected)) &&
     ((lit !== null && !paths.some((p) => lit.has(p))) || !paths.some(matches));
   return (
     <div
