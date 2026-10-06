@@ -19,8 +19,7 @@ connections between them, and be able to prove it's right.
   can write the whole result out as a typed data file. Everything built after
   this reads that output, so the shape it writes is a contract.
 
-## Constraints
-
+## Constraint
 - This code imports no web framework, no UI library and no database client. It
   takes a directory path, returns data, and runs from a plain script with
   nothing else started.
