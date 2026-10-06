@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import Parser from "web-tree-sitter";
 
@@ -8,8 +7,20 @@ import Parser from "web-tree-sitter";
 
 export type SyntaxNode = Parser.SyntaxNode;
 
-const require = createRequire(import.meta.url);
-const GRAMMARS = join(dirname(require.resolve("tree-sitter-wasms/package.json")), "out");
+// The grammar folder is found by Node at runtime, never by a bundler. Inside
+// the Next server, Turbopack replaces both require.resolve("...") and the
+// require that createRequire(import.meta.url) returns with its own stand-ins,
+// which hand back a module id rather than a folder on disk. Node's own
+// createRequire, fetched through process.getBuiltinModule, is invisible to it.
+let grammars: string | null = null;
+function grammarDir(): string {
+  if (grammars === null) {
+    const { createRequire: nodeCreateRequire } = process.getBuiltinModule("node:module");
+    const resolve = nodeCreateRequire(import.meta.url).resolve;
+    grammars = join(dirname(resolve("tree-sitter-wasms/package.json")), "out");
+  }
+  return grammars;
+}
 
 let ready: Promise<void> | null = null;
 const loaded = new Map<string, Promise<Parser.Language>>();
@@ -19,7 +30,7 @@ export async function parserFor(grammar: string): Promise<Parser> {
   await ready;
   let language = loaded.get(grammar);
   if (!language) {
-    language = Parser.Language.load(join(GRAMMARS, `tree-sitter-${grammar}.wasm`));
+    language = Parser.Language.load(join(grammarDir(), `tree-sitter-${grammar}.wasm`));
     loaded.set(grammar, language);
   }
   const parser = new Parser();
