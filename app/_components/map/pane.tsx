@@ -7,6 +7,11 @@ import { useHover } from "./state";
 
 export type Tab = "structure" | "explanation";
 
+const TABS: { id: Tab; label: string }[] = [
+  { id: "structure", label: "Structure" },
+  { id: "explanation", label: "Explanation" },
+];
+
 /** Ranked lists show this many before offering the rest. */
 const RANKED_ROWS = 10;
 
@@ -28,13 +33,24 @@ export function DetailPane({ name, summary, file, folder, tab, onTab, onGo, onCl
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-11 shrink-0 items-stretch border-b border-border px-1">
-        <div role="tablist" aria-label="Detail" className="flex flex-1 items-stretch">
-          <TabButton id="structure" tab={tab} onTab={onTab}>
-            Structure
-          </TabButton>
-          <TabButton id="explanation" tab={tab} onTab={onTab}>
-            Explanation
-          </TabButton>
+        <div
+          role="tablist"
+          aria-label="Detail"
+          className="flex flex-1 items-stretch"
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            e.preventDefault();
+            const step = e.key === "ArrowRight" ? 1 : -1;
+            const next = TABS[(TABS.findIndex((t) => t.id === tab) + step + TABS.length) % TABS.length].id;
+            onTab(next);
+            document.getElementById(`detail-tab-${next}`)?.focus();
+          }}
+        >
+          {TABS.map((t) => (
+            <TabButton key={t.id} id={t.id} tab={tab} onTab={onTab}>
+              {t.label}
+            </TabButton>
+          ))}
         </div>
         <button
           type="button"
@@ -48,7 +64,12 @@ export function DetailPane({ name, summary, file, folder, tab, onTab, onGo, onCl
           </svg>
         </button>
       </div>
-      <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        role="tabpanel"
+        id="detail-panel"
+        aria-labelledby={`detail-tab-${tab}`}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
         {file && (tab === "structure" ? <FileStructure detail={file} onGo={onGo} /> : <NoExplanation what="file" />)}
         {folder &&
           (tab === "structure" ? <FolderStructure detail={folder} /> : <NoExplanation what="folder" />)}
@@ -63,7 +84,10 @@ function TabButton({ id, tab, onTab, children }: { id: Tab; tab: Tab; onTab: (t:
     <button
       type="button"
       role="tab"
+      id={`detail-tab-${id}`}
       aria-selected={active}
+      aria-controls="detail-panel"
+      tabIndex={active ? 0 : -1}
       onClick={() => onTab(id)}
       className={`-mb-px border-b-2 px-2.5 text-xs font-medium ${
         active ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg"

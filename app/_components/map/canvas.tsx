@@ -41,7 +41,11 @@ export function MapCanvas(props: Props) {
 function Canvas({ base, open, selection, onOpen, onClose, onSelectFile, onClear }: Props) {
   const { fitView, getZoom } = useReactFlow();
 
-  const view = useMemo(() => buildView(base.folded, base.edges, base.fanIn, open), [base, open]);
+  const pinned = selection?.kind === "file" ? selection.path : null;
+  const view = useMemo(
+    () => buildView(base.folded, base.edges, base.fanIn, open, pinned),
+    [base, open, pinned],
+  );
   const placed = useMemo(() => layout(view), [view]);
 
   const selected = useMemo(() => {

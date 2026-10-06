@@ -93,6 +93,8 @@ export function buildView(
   edges: readonly FileEdge[],
   fileFanIn: ReadonlyMap<string, number>,
   open: ReadonlySet<string>,
+  /** A file that must get a row if its box is open: the selected one. */
+  pinned: string | null = null,
 ): View {
   const dirs = [...fold.groups.keys()];
 
@@ -114,6 +116,10 @@ export function buildView(
     );
     // Showing MAX_ROWS - 1 rows and a "1 more" line hides nothing worth hiding.
     const fits = ranked.length <= MAX_ROWS;
+    // A selected file ranked past the cut takes the last listed row's place,
+    // so selecting it from the pane lands on a row rather than "n more".
+    const at = pinned === null ? -1 : ranked.indexOf(pinned);
+    if (!fits && at >= MAX_ROWS - 1) ranked.splice(MAX_ROWS - 2, 0, ...ranked.splice(at, 1));
     shown.set(dir, {
       rows: fits ? ranked : ranked.slice(0, MAX_ROWS - 1),
       hidden: fits ? [] : ranked.slice(MAX_ROWS - 1),
