@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { CATEGORY_LABEL, type Category } from "@/lib/map/categories";
 import type { FileDetail, FolderDetail, Ranked, Summary } from "@/lib/map/detail";
+import { INSIGHT_TEXT, LONG_LINES, REACH_DEPTH, type Direction, type Insights, type Reached } from "@/lib/map/graph";
 import { useHover } from "./state";
 
 export type Tab = "structure" | "explanation";
@@ -17,19 +18,29 @@ const RANKED_ROWS = 10;
 
 type Go = (path: string) => void;
 
+/** Which walk is showing for the selected file, and what it found. */
+export type ReachView = { direction: Direction | null; found: Reached[] | null };
+
 type Props = {
   name: string;
   summary: Summary;
+  insights: Insights;
+  insightsOpen: boolean;
+  onInsightsOpen: (open: boolean) => void;
+  categories: ReadonlyMap<string, Category>;
   file: FileDetail | null;
   folder: FolderDetail | null;
   tab: Tab;
   onTab: (tab: Tab) => void;
+  reach: ReachView;
+  onReach: (direction: Direction | null) => void;
   onGo: Go;
   onClear: () => void;
 };
 
-export function DetailPane({ name, summary, file, folder, tab, onTab, onGo, onClear }: Props) {
-  if (!file && !folder) return <Overview name={name} summary={summary} onGo={onGo} />;
+export function DetailPane(props: Props) {
+  const { file, folder, tab, onTab, onGo, onClear } = props;
+  if (!file && !folder) return <Overview {...props} />;
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-11 shrink-0 items-stretch border-b border-border px-1">
@@ -70,7 +81,18 @@ export function DetailPane({ name, summary, file, folder, tab, onTab, onGo, onCl
         aria-labelledby={`detail-tab-${tab}`}
         className="min-h-0 flex-1 overflow-y-auto"
       >
-        {file && (tab === "structure" ? <FileStructure detail={file} onGo={onGo} /> : <NoExplanation what="file" />)}
+        {file &&
+          (tab === "structure" ? (
+            <FileStructure
+              detail={file}
+              reach={props.reach}
+              onReach={props.onReach}
+              categories={props.categories}
+              onGo={onGo}
+            />
+          ) : (
+            <NoExplanation what="file" />
+          ))}
         {folder &&
           (tab === "structure" ? <FolderStructure detail={folder} /> : <NoExplanation what="folder" />)}
       </div>
@@ -101,7 +123,7 @@ function TabButton({ id, tab, onTab, children }: { id: Tab; tab: Tab; onTab: (t:
 // ---------------------------------------------------------------------------
 // Nothing selected: the repository as a whole. The pane's resting state.
 
-function Overview({ name, summary, onGo }: { name: string; summary: Summary; onGo: Go }) {
+function Overview({ name, summary, insights, insightsOpen, onInsightsOpen, categories, onGo }: Props) {
   const { importsBy } = summary;
   const importParts = [
     [importsBy.resolved, "to a file in this repository"],
@@ -163,6 +185,14 @@ function Overview({ name, summary, onGo }: { name: string; summary: Summary; onG
           note="Parsed files nothing imports, the ones that pull in most first."
           unit="imports"
           rows={summary.entryPoints}
+          onGo={onGo}
+        />
+        <InsightsPanel
+          insights={insights}
+          framework={summary.framework}
+          open={insightsOpen}
+          onOpen={onInsightsOpen}
+          categories={categories}
           onGo={onGo}
         />
       </div>
@@ -236,7 +266,19 @@ function RankedList(props: {
 // ---------------------------------------------------------------------------
 // A file.
 
-function FileStructure({ detail, onGo }: { detail: FileDetail; onGo: Go }) {
+function FileStructure({
+  detail,
+  reach,
+  onReach,
+  categories,
+  onGo,
+}: {
+  detail: FileDetail;
+  reach: ReachView;
+  onReach: (direction: Direction | null) => void;
+  categories: ReadonlyMap<string, Category>;
+  onGo: Go;
+}) {
   const { file } = detail;
   return (
     <>
@@ -271,7 +313,29 @@ function FileStructure({ detail, onGo }: { detail: FileDetail; onGo: Go }) {
             </Fact>
           )}
         </dl>
+        <div role="group" aria-label="Walk the imports" className="mt-3 grid grid-cols-2 gap-1.5">
+          {WALKS.map((w) => (
+            <button
+              key={w.direction}
+              type="button"
+              aria-pressed={reach.direction === w.direction}
+              title={w.hint}
+              onClick={() => onReach(reach.direction === w.direction ? null : w.direction)}
+              className={`h-7 rounded-control border text-xs font-medium ${
+                reach.direction === w.direction
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-border hover:bg-surface-2"
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {reach.direction && reach.found && (
+        <ReachList direction={reach.direction} found={reach.found} categories={categories} onGo={onGo} />
+      )}
 
       <section className="border-t border-border py-2">
         <SectionHead title="Imports" count={detail.imports.length} tick="outgoing" />
@@ -319,6 +383,232 @@ function NeighbourList({ rows, onGo, empty }: { rows: FileDetail["imports"]; onG
         </PathRow>
       ))}
     </ul>
+  );
+}
+
+const WALKS: { direction: Direction; label: string; hint: string; tick: "incoming" | "outgoing" }[] = [
+  {
+    direction: "dependents",
+    label: "Blast radius",
+    hint: "Files that import this one, and the files that import those",
+    tick: "incoming",
+  },
+  {
+    direction: "dependencies",
+    label: "Dependency chain",
+    hint: "Files this one imports, and the files those import",
+    tick: "outgoing",
+  },
+];
+
+const DIRECT: Record<Direction, string> = { dependents: "Import it directly", dependencies: "Imported directly" };
+
+/** Every level the walk returned, so the rows always add up to the count. */
+const levels = Array.from({ length: REACH_DEPTH }, (_, i) => i + 1);
+
+function ReachList({
+  direction,
+  found,
+  categories,
+  onGo,
+}: {
+  direction: Direction;
+  found: Reached[];
+  categories: ReadonlyMap<string, Category>;
+  onGo: Go;
+}) {
+  const walk = WALKS.find((w) => w.direction === direction)!;
+  return (
+    <section className="border-t border-border py-2">
+      <SectionHead title={walk.label} count={found.length} aside={`${REACH_DEPTH} levels`} tick={walk.tick} />
+      {found.length === 0 ? (
+        <p className="px-3 py-1 text-xs text-fg-muted">
+          {direction === "dependents" ? "Nothing in this repository imports it." : "It imports no file in this repository."}
+        </p>
+      ) : (
+        levels.map((depth) => {
+          const level = found.filter((r) => r.depth === depth);
+          if (level.length === 0) return null;
+          const label = depth === 1 ? DIRECT[direction] : `${depth} steps away`;
+          return (
+            <div key={label} className="mt-1">
+              <p className="px-3 pb-0.5 text-[11px] leading-4 text-fg-muted">
+                {label} <Num>{level.length}</Num>
+              </p>
+              <ul>
+                {level.map((r) => (
+                  <PathRow key={r.path} path={r.path} category={categories.get(r.path) ?? "other"} onGo={onGo} />
+                ))}
+              </ul>
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Insights. Facts about the edge list, behind a closed disclosure so they're
+// never the first thing anyone reads: this explains a codebase, it doesn't
+// grade one. The explanatory group leads; the ones that read closer to a
+// verdict sit underneath.
+
+function InsightsPanel({
+  insights,
+  framework,
+  open,
+  onOpen,
+  categories,
+  onGo,
+}: {
+  insights: Insights;
+  framework: string | null;
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  categories: ReadonlyMap<string, Category>;
+  onGo: Go;
+}) {
+  const cat = (p: string) => categories.get(p) ?? "other";
+  return (
+    <section className="border-t border-border">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="insights"
+        onClick={() => onOpen(!open)}
+        className="flex h-8 w-full items-center gap-1.5 px-3 text-left text-xs font-medium hover:bg-surface-2"
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          aria-hidden="true"
+          className={`shrink-0 text-fg-muted ${open ? "rotate-90" : ""}`}
+        >
+          <path d="M3.5 2l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+        Insights
+      </button>
+      {open && (
+        <div id="insights" className="pb-2">
+          <InsightGroup title="Nothing imports these" count={insights.unimported.length} text={INSIGHT_TEXT.unimported}>
+            {framework === null && (
+              <p className="px-3 pb-1 text-[11px] leading-4 text-fg-muted">
+                No framework was detected, so files a framework or a script runner loads directly are listed too.
+              </p>
+            )}
+            <CappedList
+              rows={insights.unimported.map((u) => ({ path: u.path, value: u.imports }))}
+              unit="imports"
+              cat={cat}
+              onGo={onGo}
+            />
+          </InsightGroup>
+
+          <InsightGroup
+            title={`Imported by ${insights.heavyCutoff} or more`}
+            count={insights.heavy.length}
+            text={INSIGHT_TEXT.heavy}
+          >
+            <CappedList
+              rows={insights.heavy.map((h) => ({ path: h.path, value: h.importedBy }))}
+              unit="imported by"
+              cat={cat}
+              onGo={onGo}
+            />
+          </InsightGroup>
+
+          <InsightGroup title="Import loops" count={insights.cycles.length} text={INSIGHT_TEXT.cycle}>
+            {insights.cycles.length === 0 ? (
+              <p className="px-3 py-1 text-xs text-fg-muted">No file imports itself, directly or through others.</p>
+            ) : (
+              insights.cycles.map((loop) => (
+                <div key={loop.join("\n")} className="mb-1.5">
+                  {/* A real sequence: each file imports the next, and the last
+                      imports the first. */}
+                  <ol>
+                    {loop.map((p) => (
+                      <PathRow key={p} path={p} category={cat(p)} onGo={onGo} />
+                    ))}
+                  </ol>
+                  <p className="px-3 text-[11px] leading-4 text-fg-muted">
+                    which imports <span className="font-mono">{loop[0].slice(loop[0].lastIndexOf("/") + 1)}</span> again
+                  </p>
+                </div>
+              ))
+            )}
+          </InsightGroup>
+
+          <InsightGroup title={`Over ${LONG_LINES} lines`} count={insights.long.length} text={INSIGHT_TEXT.long}>
+            <CappedList
+              rows={insights.long.map((l) => ({ path: l.path, value: l.lines }))}
+              unit="lines"
+              cat={cat}
+              onGo={onGo}
+            />
+          </InsightGroup>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InsightGroup({
+  title,
+  count,
+  text,
+  children,
+}: {
+  title: string;
+  count: number;
+  text: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="pt-1.5">
+      <SectionHead title={title} count={count} />
+      <p className="px-3 pb-1 text-[11px] leading-4 text-fg-muted">{text}</p>
+      {children}
+    </div>
+  );
+}
+
+function CappedList({
+  rows,
+  unit,
+  cat,
+  onGo,
+}: {
+  rows: { path: string; value: number }[];
+  unit: string;
+  cat: (path: string) => Category;
+  onGo: Go;
+}) {
+  const [all, setAll] = useState(false);
+  if (rows.length === 0) return <p className="px-3 py-1 text-xs text-fg-muted">None.</p>;
+  const shown = all ? rows : rows.slice(0, RANKED_ROWS);
+  return (
+    <>
+      <ul>
+        {shown.map((r) => (
+          <PathRow key={r.path} path={r.path} category={cat(r.path)} onGo={onGo}>
+            <span className="shrink-0 font-mono text-[11px] tabular-nums text-fg-muted" title={unit}>
+              {r.value}
+            </span>
+          </PathRow>
+        ))}
+      </ul>
+      {rows.length > RANKED_ROWS && (
+        <button
+          type="button"
+          onClick={() => setAll((a) => !a)}
+          className="mx-3 mt-1 text-[11px] text-fg-muted hover:text-fg"
+        >
+          {all ? "Show fewer" : `Show all ${rows.length}`}
+        </button>
+      )}
+    </>
   );
 }
 

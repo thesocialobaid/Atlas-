@@ -46,6 +46,8 @@ export type PanelData = {
   selectedGroup: boolean;
   relations: ReadonlyMap<string, Relation>;
   categories: ReadonlyMap<string, Category>;
+  /** The rail's filter: rows of other kinds dim, and the header counts matches. */
+  category: Category | null;
   onClose: (dir: string) => void;
   onSelect: (path: string) => void;
 };
@@ -55,7 +57,7 @@ export type PanelNode = Node<PanelData, "panel">;
 
 function Meta({ group }: { group: Placed }) {
   return (
-    <span className="flex gap-2 font-mono text-[10px] leading-4 text-fg-muted">
+    <span className="flex shrink-0 gap-2 font-mono text-[10px] leading-4 text-fg-muted">
       <span>{group.files.length} files</span>
       <span className={group.fanIn ? "text-incoming" : undefined}>{group.fanIn} in</span>
       <span className={group.fanOut ? "text-outgoing" : undefined}>{group.fanOut} out</span>
@@ -73,11 +75,11 @@ export function Folded({ data }: NodeProps<FoldedNode>) {
       onClick={() => data.onOpen(group.dir)}
       title={`${group.dir === "." ? "repository root" : group.dir}: open`}
       style={{ width: group.width, height: group.height }}
-      className={`flex flex-col items-start gap-0.5 rounded-md border px-3 py-2 text-left hover:border-fg hover:bg-surface-2 ${
+      className={`flex flex-col items-start rounded-md border px-3 py-[3px] text-left hover:border-fg hover:bg-surface-2 ${
         pointed ? "border-fg bg-surface-2" : `border-border bg-surface ${data.dim ? DIM : ""}`
       }`}
     >
-      <span className="w-full truncate font-mono text-[11px] leading-4 font-medium">{group.label}</span>
+      <span className="w-full shrink-0 truncate font-mono text-[11px] leading-4 font-medium">{group.label}</span>
       <Meta group={group} />
       <Handle type="target" position={Position.Left} id="in" style={anchor} />
       <Handle type="source" position={Position.Right} id="out" style={anchor} />
@@ -89,9 +91,15 @@ export function Panel({ data }: NodeProps<PanelNode>) {
   const { group, lit, selected, relations } = data;
   const { hover } = useHover();
   const header = useHoverProps(group.files);
+  const { category, categories } = data;
+  const matches = (p: string) => category === null || categories.get(p) === category;
+  const matched = category === null ? 0 : group.files.filter(matches).length;
   // Something the pane points at is never left dimmed.
+  // The selected file is never dimmed either: the pane is describing it.
   const off = (paths: readonly string[]) =>
-    lit !== null && !paths.some((p) => lit.has(p)) && !paneHovers(hover, paths);
+    !paneHovers(hover, paths) &&
+    (selected === null || !paths.includes(selected)) &&
+    ((lit !== null && !paths.some((p) => lit.has(p))) || !paths.some(matches));
   return (
     <div
       style={{ width: group.width, height: group.height }}
@@ -107,7 +115,22 @@ export function Panel({ data }: NodeProps<PanelNode>) {
         style={{ height: HEADER_HEIGHT }}
         className="flex shrink-0 flex-col items-start justify-center gap-0.5 rounded-t-md border-b border-border bg-surface-2 px-3 text-left hover:bg-border"
       >
-        <span className="w-full truncate font-mono text-[11px] leading-4 font-medium">{group.label}</span>
+        <span className="flex w-full items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] leading-4 font-medium">{group.label}</span>
+          {category !== null && (
+            <span
+              title={`${matched} of ${group.files.length} files match the filter`}
+              className="flex shrink-0 items-center gap-1 font-mono text-[10px] leading-4 tabular-nums"
+            >
+              <span
+                aria-hidden="true"
+                className="size-1.5 rounded-[1px]"
+                style={{ background: `var(--cat-${category})` }}
+              />
+              {matched} match
+            </span>
+          )}
+        </span>
         <Meta group={group} />
       </button>
       <ul className="py-1">

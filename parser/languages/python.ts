@@ -7,7 +7,29 @@ import type { SyntaxNode } from "./tree-sitter.ts";
 
 // Absolute imports are looked up from the repository root, and from src/ when
 // it exists: the two layouts Python packaging documents. A name found in
-// neither is outside the repository (standard library or an installed package).
+// neither is outside the repository (standard library or an installed
+// package).
+//
+// A folder that isn't a package (no __init__.py) holds scripts, and running a
+// script puts its folder at the front of sys.path, so `import config` beside
+// config.py loads that file. Those folders are searched first. Inside a
+// package Python 3 never searches the module's own folder, so they aren't.
+// An import never resolves to the file doing the importing: pkg/logging.py's
+// `import logging` means the standard library, not itself.
+
+/** Where one file's absolute imports are searched, in order. */
+function searchRoots(ctx: Context, roots: string[], here: string): string[] {
+  const isPackage = exists(ctx, [`${here ? `${here}/` : ""}__init__.py`, `${here ? `${here}/` : ""}__init__.pyi`]) !== null;
+  return isPackage || roots.includes(here) ? roots : [here, ...roots];
+}
+
+/** The first root holding top-level module `top`, other than the importer itself. */
+function rootFor(ctx: Context, roots: string[], from: string, top: string): string | undefined {
+  return roots.find((r) => {
+    const hit = exists(ctx, candidates(r, top));
+    return hit !== null && hit !== from;
+  });
+}
 
 function moduleName(path: string, roots: string[]): string | null {
   for (const root of roots) {
@@ -50,7 +72,7 @@ export const python: LanguageHandler = {
       for (const node of tree.rootNode.descendantsOfType("import_statement")) {
         for (const name of node.childrenForFieldName("name")) {
           const dotted = (name.type === "aliased_import" ? name.childForFieldName("name") : name)?.text;
-          if (dotted) out.push(absolute(ctx, roots, file.path, dotted, lineOf(node)));
+          if (dotted) out.push(absolute(ctx, searchRoots(ctx, roots, here), file.path, dotted, lineOf(node)));
         }
       }
 
@@ -72,7 +94,7 @@ export const python: LanguageHandler = {
           out.push(...fromImport(ctx, file.path, moduleNode.text, base, rest, names, line));
         } else {
           const dotted = moduleNode.text;
-          const root = roots.find((r) => exists(ctx, candidates(r, dotted.split(".")[0])) !== null);
+          const root = rootFor(ctx, searchRoots(ctx, roots, here), file.path, dotted.split(".")[0]);
           if (root === undefined) {
             out.push(record.external(file.path, dotted, "import", line, "not a module in this repository (standard library or installed package)"));
             continue;
@@ -91,7 +113,7 @@ export const python: LanguageHandler = {
 
 function absolute(ctx: Context, roots: string[], from: string, dotted: string, line: number): ImportRecord {
   const top = dotted.split(".")[0];
-  const root = roots.find((r) => exists(ctx, candidates(r, top)) !== null);
+  const root = rootFor(ctx, roots, from, top);
   if (root === undefined) {
     return record.external(from, dotted, "import", line, "not a module in this repository (standard library or installed package)");
   }
