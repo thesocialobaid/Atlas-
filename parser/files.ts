@@ -149,6 +149,7 @@ export function loadFile(root: string, path: string, parseable: (language: strin
       skipReason,
       hadSyntaxErrors: null,
       role: null,
+      framework: null,
     },
     text: skipReason ? null : text,
   };

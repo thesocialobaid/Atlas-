@@ -1,7 +1,7 @@
 // The output contract. Everything built after the parser reads this shape, so
 // changing it means bumping OUTPUT_VERSION and updating every reader.
 
-export const OUTPUT_VERSION = 1;
+export const OUTPUT_VERSION = 2;
 
 /** Why a file's imports weren't read. Every file is still a node. */
 export type SkipReason =
@@ -34,8 +34,10 @@ export type RepoFile = {
    * the file wasn't parsed or its parser doesn't report recovery.
    */
   hadSyntaxErrors: boolean | null;
-  /** Set by a framework adapter. The no-framework fallback never sets it. */
+  /** Set by a framework adapter. Null when no adapter recognised the file. */
   role: string | null;
+  /** The adapter that set the role; null exactly when role is. */
+  framework: string | null;
 };
 
 export type ImportKind =
@@ -93,13 +95,42 @@ export type Coverage = {
   reasons: ReasonGroup[];
 };
 
+/** The methods a route can carry: the ones both frameworks name with their own syntax. */
+export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+/**
+ * A route an adapter read from syntax: the method and the full pattern, both
+ * exactly as the framework will match them. Never partial, never guessed.
+ */
+export type Route = {
+  /** The adapter that read it. */
+  framework: string;
+  file: string;
+  method: HttpMethod;
+  /** Starts with "/". Dynamic segments in the framework's own notation. */
+  path: string;
+  /** Where the route is declared: the method's decorator or export. */
+  line: number;
+};
+
+/** Routes an adapter could see but not read exactly, grouped by why. */
+export type Withheld = {
+  framework: string;
+  reason: string;
+  count: number;
+  /** "file:line", up to five. */
+  examples: string[];
+};
+
 export type ParseResult = {
   version: typeof OUTPUT_VERSION;
   root: string;
   generatedAt: string;
   /** How the file list was built: from git (honours .gitignore) or a walk. */
   fileSource: "git" | "walk";
-  adapter: string;
+  /** Adapters that own at least one file, in detection order. Empty when none matched. */
+  adapters: string[];
   files: RepoFile[];
   imports: ImportRecord[];
   /** Deduplicated: one per (from, to, kind). */
@@ -107,4 +138,6 @@ export type ParseResult = {
   /** Computed from edges after collapsing kinds, so two kinds count once. */
   fan: FanCounts[];
   coverage: Coverage;
+  routes: Route[];
+  routesWithheld: Withheld[];
 };

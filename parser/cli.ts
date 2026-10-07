@@ -13,7 +13,7 @@ function summary(r: ParseResult): string {
   const c = r.coverage;
   const lines: string[] = [];
   const pad = (n: number) => String(n).padStart(7);
-  lines.push(`${r.root}  (files from ${r.fileSource}, adapter: ${r.adapter})`, "");
+  lines.push(`${r.root}  (files from ${r.fileSource}, adapters: ${r.adapters.join(", ") || "none"})`, "");
   lines.push(`files found   ${pad(c.filesFound)}`);
   lines.push(`files parsed  ${pad(c.filesParsed)}`);
   lines.push(`files skipped ${pad(c.filesSkipped)}   (${c.filesParsed} + ${c.filesSkipped} = ${c.filesParsed + c.filesSkipped})`);
@@ -42,6 +42,17 @@ function summary(r: ParseResult): string {
     }
   }
   lines.push("", `edges ${r.edges.length}`);
+
+  const roles = new Map<string, number>();
+  for (const f of r.files) if (f.role) roles.set(`${f.framework}:${f.role}`, (roles.get(`${f.framework}:${f.role}`) ?? 0) + 1);
+  lines.push("", `roles: ${[...roles].map(([role, n]) => `${role} ${n}`).join(", ") || "none"}`);
+  lines.push("", `routes ${r.routes.length}`);
+  const sorted = [...r.routes].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.method < b.method ? -1 : 1));
+  for (const route of sorted) lines.push(`  ${route.method.padEnd(7)} ${route.path}   ${route.file}:${route.line}  [${route.framework}]`);
+  for (const g of r.routesWithheld) {
+    lines.push(`  withheld ${g.count} [${g.framework}]: ${g.reason}`);
+    for (const e of g.examples.slice(0, 3)) lines.push(`             ${e}`);
+  }
   return lines.join("\n");
 }
 

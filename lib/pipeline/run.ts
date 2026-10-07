@@ -177,7 +177,10 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
 
     await report("parsing", `Parsing ${paths.length} files`);
     const result = await parseRepository(dir);
-    await report("parsing", `${result.coverage.filesParsed} parsed, ${result.coverage.filesSkipped} skipped, ${result.edges.length} connections`);
+    await report(
+      "parsing",
+      `${result.coverage.filesParsed} parsed, ${result.coverage.filesSkipped} skipped, ${result.edges.length} connections, ${result.routes.length} routes`,
+    );
 
     await report("storing", `Storing ${result.files.length} files and ${result.edges.length} connections`);
     await store(db, orgId, analysisId, result);
@@ -191,7 +194,8 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
         progressed_at: new Date().toISOString(),
         finished_at: new Date().toISOString(),
         coverage: result.coverage,
-        adapter: result.adapter,
+        adapters: result.adapters,
+        routes_withheld: result.routesWithheld,
         parser_version: OUTPUT_VERSION,
       })
       .eq("id", analysisId)
@@ -279,15 +283,31 @@ async function store(db: PipelineDb, orgId: string, analysisId: string, result: 
       if (error) failed("store imports", error.message);
     }
 
-    const roles = result.files.flatMap((f) => (f.role === null ? [] : [{ path: f.path, role: f.role }]));
+    const roles = result.files.flatMap((f) =>
+      f.role === null || f.framework === null ? [] : [{ path: f.path, role: f.role, framework: f.framework }],
+    );
     for (const rows of chunks(roles)) {
       const { error } = await db.from("file_roles").insert(
-        rows.map((r) => ({ org_id: orgId, file_id: id(r.path), role: r.role, source: "convention" })),
+        rows.map((r) => ({ org_id: orgId, file_id: id(r.path), role: r.role, framework: r.framework, source: "convention" })),
       );
       if (error) failed("store file roles", error.message);
     }
+
+    for (const rows of chunks(result.routes)) {
+      const { error } = await db.from("routes").insert(
+        rows.map((r) => ({
+          org_id: orgId,
+          file_id: id(r.file),
+          framework: r.framework,
+          method: r.method,
+          path: r.path,
+          line: r.line,
+        })),
+      );
+      if (error) failed("store routes", error.message);
+    }
   } catch (e) {
-    // Files cascade to edges, imports and roles.
+    // Files cascade to edges, imports, roles and routes.
     const { error } = await db.from("files").delete().eq("analysis_id", analysisId).eq("org_id", orgId);
     if (error) throw new Error(`${e instanceof Error ? e.message : String(e)}; cleaning up also failed: ${error.message}`);
     throw e;

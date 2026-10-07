@@ -2,6 +2,7 @@
 // Pure, so every number in the pane can be checked from a script, and so a
 // selection never needs a request: it's all arithmetic over what's loaded.
 
+import { frameworkName } from "../../parser/adapters/taxonomy.ts";
 import type { ImportOutcome, RepoFile } from "../../parser/types.ts";
 import { CATEGORIES, categoryOf, type Category } from "./categories.ts";
 import type { Fold } from "./fold.ts";
@@ -11,7 +12,11 @@ import type { FileEdge } from "./view.ts";
 export type Ranked = { path: string; category: Category; count: number };
 
 export type Summary = {
-  framework: string | null;
+  /** Display names, in detection order; empty when no adapter recognised anything. */
+  frameworks: string[];
+  routes: number;
+  /** Routes seen but not read exactly. Null when the analysis predates route reading. */
+  routesWithheld: number | null;
   files: number;
   imports: number;
   importsBy: Record<ImportOutcome, number>;
@@ -34,8 +39,9 @@ export function summarise(result: MapInput): Summary {
   const ranked = (f: RepoFile, count: number): Ranked => ({ path: f.path, category: categoryOf(f), count });
 
   return {
-    // "none" is the fallback adapter's name: no framework recognised.
-    framework: result.adapter === "none" ? null : result.adapter,
+    frameworks: result.adapters.map((a) => frameworkName(a) ?? a),
+    routes: result.routes.length,
+    routesWithheld: result.routesWithheld === null ? null : result.routesWithheld.reduce((n, g) => n + g.count, 0),
     files: result.files.length,
     // Every import seen, resolved or not, from coverage: resolved imports
     // aren't kept one by one, only as the edges they became.

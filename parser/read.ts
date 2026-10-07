@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { OUTPUT_VERSION } from "./types.ts";
-import type { Coverage, Edge, ImportRecord, ParseResult, RepoFile, SkipReason } from "./types.ts";
+import { HTTP_METHODS, OUTPUT_VERSION } from "./types.ts";
+import type { Coverage, Edge, ImportRecord, ParseResult, RepoFile, Route, SkipReason, Withheld } from "./types.ts";
 
 // Reading a result back checks every field rather than trusting a cast, so a
 // stale or hand-edited file fails here, loudly, instead of downstream. The
@@ -52,6 +52,7 @@ export function parseRepoFile(v: unknown, w: string): RepoFile {
     skipReason,
     hadSyntaxErrors: errors === null || typeof errors === "boolean" ? errors : fail(`${w}.hadSyntaxErrors`, "boolean | null"),
     role: strOrNull(o.role, `${w}.role`),
+    framework: strOrNull(o.framework, `${w}.framework`),
   };
 }
 
@@ -76,6 +77,29 @@ export function parseEdge(v: unknown, w: string): Edge {
   return { from: str(o.from, `${w}.from`), to: str(o.to, `${w}.to`), kind: oneOf(o.kind, KINDS, `${w}.kind`) };
 }
 
+export function parseRoute(v: unknown, w: string): Route {
+  const o = obj(v, w);
+  const path = str(o.path, `${w}.path`);
+  if (!path.startsWith("/")) fail(`${w}.path`, "a pattern starting with /");
+  return {
+    framework: str(o.framework, `${w}.framework`),
+    file: str(o.file, `${w}.file`),
+    method: oneOf(o.method, HTTP_METHODS, `${w}.method`),
+    path,
+    line: num(o.line, `${w}.line`),
+  };
+}
+
+export function parseWithheld(v: unknown, w: string): Withheld {
+  const o = obj(v, w);
+  return {
+    framework: str(o.framework, `${w}.framework`),
+    reason: str(o.reason, `${w}.reason`),
+    count: num(o.count, `${w}.count`),
+    examples: arr(o.examples, `${w}.examples`).map((e, i) => str(e, `${w}.examples[${i}]`)),
+  };
+}
+
 export function readParseResult(path: string): ParseResult {
   const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
   const o = obj(raw, "result");
@@ -92,7 +116,7 @@ export function readParseResult(path: string): ParseResult {
     root: str(o.root, "root"),
     generatedAt: str(o.generatedAt, "generatedAt"),
     fileSource: oneOf(o.fileSource, ["git", "walk"] as const, "fileSource"),
-    adapter: str(o.adapter, "adapter"),
+    adapters: arr(o.adapters, "adapters").map((a, i) => str(a, `adapters[${i}]`)),
     files,
     imports: arr(o.imports, "imports").map((r, i) => parseImportRecord(r, `imports[${i}]`)),
     edges,
@@ -101,7 +125,13 @@ export function readParseResult(path: string): ParseResult {
       return { path: str(x.path, `fan[${i}].path`), fanIn: num(x.fanIn, `fan[${i}].fanIn`), fanOut: num(x.fanOut, `fan[${i}].fanOut`) };
     }),
     coverage: parseCoverage(o.coverage),
+    routes: arr(o.routes, "routes").map((r, i) => parseRoute(r, `routes[${i}]`)),
+    routesWithheld: arr(o.routesWithheld, "routesWithheld").map((r, i) => parseWithheld(r, `routesWithheld[${i}]`)),
   };
+  // A route belongs to a file that's a node, like an edge's two ends.
+  result.routes.forEach((r, i) => {
+    if (!paths.has(r.file)) fail(`routes[${i}].file`, "a file in the result");
+  });
   return result;
 }
 
