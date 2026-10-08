@@ -1,6 +1,7 @@
 import type { Adapter } from "../adapter.ts";
 import { aspnet } from "./aspnet.ts";
 import { django } from "./django.ts";
+import { express } from "./express.ts";
 import { fastapi, flask } from "./fastapi-flask.ts";
 import { chi, echo, fiber, gin } from "./go-web.ts";
 import { jaxrs, micronaut, spring } from "./jvm-web.ts";
@@ -21,4 +22,4 @@ import { vapor } from "./vapor.ts";
 // two claim the same directory for the same files, the earlier one wins.
 // Meta-frameworks come before the libraries they're built on (Next.js and
 // Remix before React, Nuxt before Vue), since their projects depend on both.
-export const ADAPTERS: readonly Adapter[] = [nextjs, nuxt, sveltekit, remix, astro, nestjs, fastify, hono, koa, angular, vue, react, fastapi, litestar, starlette, django, flask, spring, micronaut, jaxrs, ktor, aspnet, gin, echo, chi, fiber, actix, axum, rocket, rails, laravel, symfony, phoenix, vapor];
+export const ADAPTERS: readonly Adapter[] = [nextjs, nuxt, sveltekit, remix, astro, nestjs, fastify, hono, koa, express, angular, vue, react, fastapi, litestar, starlette, django, flask, spring, micronaut, jaxrs, ktor, aspnet, gin, echo, chi, fiber, actix, axum, rocket, rails, laravel, symfony, phoenix, vapor];

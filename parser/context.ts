@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
-import type { ImportKind, ImportRecord, RepoFile } from "./types.ts";
+import type { ImportKind, ImportRecord, ModuleExports, RepoFile } from "./types.ts";
 
 /** What every language handler gets: the file set and a way to judge a path. */
 export type Context = {
@@ -9,6 +9,8 @@ export type Context = {
   files: Map<string, RepoFile>;
   /** Source text of files whose status is "parsed". */
   text: Map<string, string>;
+  /** Filled by the JavaScript handler, by path. */
+  exports: Map<string, Omit<ModuleExports, "file">>;
 };
 
 /**

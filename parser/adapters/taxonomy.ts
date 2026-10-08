@@ -216,6 +216,16 @@ const NODE_SERVER = [
   { role: "model", label: "Models" },
 ] as const satisfies readonly RoleDef[];
 
+const EXPRESS = [
+  { role: "router", label: "Routers" },
+  { role: "controller", label: "Controllers" },
+  { role: "middleware", label: "Middleware" },
+  { role: "validator", label: "Validators" },
+  { role: "service", label: "Services" },
+  { role: "model", label: "Models" },
+  { role: "config", label: "Config" },
+] as const satisfies readonly RoleDef[];
+
 const PY_SERVER = [
   { role: "controller", label: "Controllers & handlers" },
   { role: "service", label: "Services" },
@@ -273,6 +283,7 @@ export type AspnetRole = RoleOf<typeof ASPNET>;
 export type ServerRole = RoleOf<typeof SERVER>;
 export type RailsRole = RoleOf<typeof RAILS>;
 export type LaravelRole = RoleOf<typeof LARAVEL>;
+export type ExpressRole = RoleOf<typeof EXPRESS>;
 
 // Adapter name, how its users write it, and its rail. Detection order lives
 // with the adapters; this is only names.
@@ -286,6 +297,7 @@ const FRAMEWORKS: readonly (readonly [string, string, readonly RoleDef[]])[] = [
   ["fastify", "Fastify", NODE_SERVER],
   ["hono", "Hono", NODE_SERVER],
   ["koa", "Koa", NODE_SERVER],
+  ["express", "Express", EXPRESS],
   ["angular", "Angular", ANGULAR],
   ["vue", "Vue", VUE],
   ["react", "React", REACT],

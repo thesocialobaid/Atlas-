@@ -35,7 +35,7 @@ export async function parseRepository(directory: string): Promise<ParseResult> {
   for (const h of HANDLERS) for (const l of h.languages) byLanguage.set(l, h);
 
   const { paths, source } = listFiles(root);
-  const ctx: Context = { root, files: new Map(), text: new Map() };
+  const ctx: Context = { root, files: new Map(), text: new Map(), exports: new Map() };
   for (const path of paths) {
     const { file, text } = loadFile(root, path, (language) => byLanguage.has(language));
     ctx.files.set(path, file);
@@ -72,6 +72,7 @@ export async function parseRepository(directory: string): Promise<ParseResult> {
     imports,
     edges,
     fan: fanCounts(files.map((f) => f.path), edges),
+    exports: [...ctx.exports].map(([file, e]) => ({ file, ...e })),
     coverage: coverageOf(files, imports),
     routes: framework.routes,
     routesWithheld: framework.routesWithheld,

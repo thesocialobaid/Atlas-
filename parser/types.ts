@@ -1,7 +1,7 @@
 // The output contract. Everything built after the parser reads this shape, so
 // changing it means bumping OUTPUT_VERSION and updating every reader.
 
-export const OUTPUT_VERSION = 2;
+export const OUTPUT_VERSION = 3;
 
 /** Why a file's imports weren't read. Every file is still a node. */
 export type SkipReason =
@@ -46,7 +46,9 @@ export type ImportKind =
   | "dynamic"
   | "include"
   | "module-declaration"
-  | "reference";
+  | "reference"
+  /** A CommonJS require() with a literal specifier, or TypeScript's `import x = require()`. */
+  | "require";
 
 export type ImportOutcome =
   /** Points at a file that is a node in this result. */
@@ -72,6 +74,18 @@ export type ImportRecord = {
 };
 
 export type Edge = { from: string; to: string; kind: ImportKind };
+
+/**
+ * The names a JavaScript or TypeScript module exports, ESM and CommonJS alike.
+ * Names is null, with the reason, when any export can't be named from the
+ * file's own syntax; a partial list is never given.
+ */
+export type ModuleExports = {
+  file: string;
+  names: string[] | null;
+  /** Set exactly when names is null. */
+  reason: string | null;
+};
 
 export type FanCounts = { path: string; fanIn: number; fanOut: number };
 
@@ -137,6 +151,8 @@ export type ParseResult = {
   edges: Edge[];
   /** Computed from edges after collapsing kinds, so two kinds count once. */
   fan: FanCounts[];
+  /** One per parsed JavaScript or TypeScript file. */
+  exports: ModuleExports[];
   coverage: Coverage;
   routes: Route[];
   routesWithheld: Withheld[];
