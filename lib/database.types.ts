@@ -26,6 +26,7 @@ export type Database = {
           error: string | null
           finished_at: string | null
           id: string
+          label_note: string | null
           links_skipped: number | null
           org_id: string
           parser_version: number | null
@@ -45,6 +46,7 @@ export type Database = {
           error?: string | null
           finished_at?: string | null
           id?: string
+          label_note?: string | null
           links_skipped?: number | null
           org_id: string
           parser_version?: number | null
@@ -64,6 +66,7 @@ export type Database = {
           error?: string | null
           finished_at?: string | null
           id?: string
+          label_note?: string | null
           links_skipped?: number | null
           org_id?: string
           parser_version?: number | null
@@ -381,6 +384,44 @@ export type Database = {
           },
           {
             foreignKeyName: "insights_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      model_cache: {
+        Row: {
+          body: string
+          cache_key: string
+          created_at: string
+          id: string
+          kind: string
+          model: string
+          org_id: string
+        }
+        Insert: {
+          body: string
+          cache_key: string
+          created_at?: string
+          id?: string
+          kind: string
+          model: string
+          org_id: string
+        }
+        Update: {
+          body?: string
+          cache_key?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          model?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "model_cache_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"

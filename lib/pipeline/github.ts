@@ -6,6 +6,7 @@
 // and a repository name, and every request is built from those against
 // GitHub's own hosts, so a pasted link can't point the server anywhere else.
 
+import { createHash } from "node:crypto";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
@@ -161,4 +162,28 @@ export async function downloadArchive(ref: RepoRef, sha: string, dir: string): P
   });
   await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), limit, unpack);
   return { links };
+}
+
+/** Larger than this, the parser skipped the file too: there's no source worth reading. */
+const MAX_FILE_BYTES = 1024 * 1024;
+
+/**
+ * One file's bytes at a commit (or "HEAD", the default branch now), with
+ * their sha256, so the caller can check them against the hash stored at
+ * analysis time. Null when the file doesn't exist there. raw.githubusercontent
+ * serves public files without counting against the API's hourly limit.
+ */
+export async function readFileAt(ref: RepoRef, commit: string, path: string): Promise<{ text: string; sha256: string } | null> {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const res = await fetch(`https://raw.githubusercontent.com/${ref.owner}/${ref.name}/${commit}/${encoded}`, {
+    headers: { "User-Agent": "atlas" },
+    redirect: "error",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) return explain(res, ref);
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_FILE_BYTES) throw new RunError(`${path} is larger than 1 MB.`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (bytes.length > MAX_FILE_BYTES) throw new RunError(`${path} is larger than 1 MB.`);
+  return { text: bytes.toString("utf8"), sha256: createHash("sha256").update(bytes).digest("hex") };
 }

@@ -36,7 +36,11 @@ export type RepoFile = {
   hadSyntaxErrors: boolean | null;
   /** Set by a framework adapter. Null when no adapter recognised the file. */
   role: string | null;
-  /** The adapter that set the role; null exactly when role is. */
+  /**
+   * The adapter that set the role, or "label" for a role the model gave a
+   * file no convention recognised (stored analyses only); null exactly when
+   * role is.
+   */
   framework: string | null;
 };
 

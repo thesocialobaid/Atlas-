@@ -1,7 +1,10 @@
 import { fanCounts } from "../parser/graph.ts";
 import { parseCoverage, parseEdge, parseImportRecord, parseRepoFile, parseRoute, parseWithheld } from "../parser/read.ts";
 import type { Route } from "../parser/types.ts";
+import { categoryOf } from "./map/categories.ts";
+import { fold } from "./map/fold.ts";
 import type { MapInput } from "./map/input.ts";
+import type { FileToExplain, FolderToExplain } from "./ai/explain.ts";
 import { createSupabase } from "./supabase";
 
 // None of these queries filter by organization: the row policy decides which
@@ -109,7 +112,7 @@ export async function getAnalysis(id: string) {
   const { data, error } = await createSupabase()
     .from("analyses")
     .select(
-      "id, status, stage, stage_message, error, commit_sha, created_at, progressed_at, finished_at, coverage, adapter, adapters, routes_withheld, links_skipped, project:projects(repo_owner, repo_name)",
+      "id, project_id, status, stage, stage_message, error, commit_sha, created_at, progressed_at, finished_at, coverage, adapter, adapters, routes_withheld, links_skipped, label_note, project:projects(repo_owner, repo_name)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -232,6 +235,7 @@ export async function getAnalysisMap(id: string) {
           ? []
           : [analysis.adapter]),
     routes,
+    labelNote: analysis.label_note,
     // Null when the analysis was stored before routes were read: the map
     // says so rather than showing an empty table as if there were none.
     routesWithheld:
@@ -242,4 +246,110 @@ export async function getAnalysisMap(id: string) {
           : fail("the analysis", "its withheld routes aren't a list"),
   };
   return { analysis, input };
+}
+
+/**
+ * Everything handed to the model to explain one file: its stored row and its
+ * neighbours, taken from the stored edges and nothing else. Null when the
+ * analysis or the file isn't readable to this organization.
+ */
+export async function getFileToExplain(analysisId: string, path: string) {
+  const analysis = await getAnalysis(analysisId);
+  if (!analysis || analysis.status !== "complete" || !analysis.project || !analysis.commit_sha) return null;
+  const db = createSupabase();
+  const { data: file, error } = await db
+    .from("files")
+    .select("id, path, sha256, language, lines, file_roles(role)")
+    .eq("analysis_id", analysisId)
+    .eq("path", path)
+    .maybeSingle();
+  if (error) fail("the file", error.message);
+  if (!file) return null;
+
+  const [out, into] = await Promise.all([
+    everyRow("imports of the file", (from, to) =>
+      db.from("edges").select("id, to_file_id").eq("from_file_id", file.id).order("id").range(from, to),
+    ),
+    everyRow("importers of the file", (from, to) =>
+      db.from("edges").select("id, from_file_id").eq("to_file_id", file.id).order("id").range(from, to),
+    ),
+  ]);
+  const ids = [...new Set([...out.map((e) => e.to_file_id), ...into.map((e) => e.from_file_id)])];
+  const pathOf = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error: e } = await db.from("files").select("id, path").in("id", ids.slice(i, i + 200)).limit(200);
+    if (e) fail("the file's neighbours", e.message);
+    for (const row of data) pathOf.set(row.id, row.path);
+  }
+  const paths = (list: string[]) =>
+    [...new Set(list.map((id) => pathOf.get(id) ?? fail("the file's neighbours", `no file ${id}`)))].sort();
+
+  const explain: FileToExplain = {
+    path: file.path,
+    sha256: file.sha256,
+    language: file.language,
+    role: file.file_roles[0]?.role ?? null,
+    imports: paths(out.map((e) => e.to_file_id)),
+    importedBy: paths(into.map((e) => e.from_file_id)),
+  };
+  return {
+    explain,
+    binary: file.lines === null,
+    repo: { owner: analysis.project.repo_owner, name: analysis.project.repo_name },
+    commit: analysis.commit_sha,
+  };
+}
+
+/**
+ * Everything handed to the model to explain a folded folder: the files drawn
+ * in its box (the same fold the map draws, recomputed from the stored files)
+ * and every stored edge that crosses its boundary.
+ */
+export async function getFolderToExplain(analysisId: string, dir: string): Promise<FolderToExplain | null> {
+  const analysis = await getAnalysis(analysisId);
+  if (!analysis || analysis.status !== "complete") return null;
+  const db = createSupabase();
+  const files = await everyRow("files", (from, to) =>
+    db
+      .from("files")
+      .select("id, path, folder, language, lines, sha256, file_roles(role)")
+      .eq("analysis_id", analysisId)
+      .order("path")
+      .range(from, to),
+  );
+  const members = fold(files).groups.get(dir);
+  if (!members) return null;
+  const inside = new Set(members);
+  const pathOf = new Map(files.map((f) => [f.id, f.path]));
+  const edges = await everyRow("edges", (from, to) =>
+    db.from("edges").select("id, from_file_id, to_file_id").eq("analysis_id", analysisId).order("id").range(from, to),
+  );
+
+  // One row per file pair: an import and a re-export of the same file are one connection here.
+  const crossing = (wantFromInside: boolean) => {
+    const seen = new Set<string>();
+    const out: { from: string; to: string }[] = [];
+    for (const e of edges) {
+      const from = pathOf.get(e.from_file_id) ?? fail("edges", `no file ${e.from_file_id}`);
+      const to = pathOf.get(e.to_file_id) ?? fail("edges", `no file ${e.to_file_id}`);
+      if (inside.has(from) !== wantFromInside || inside.has(to) === wantFromInside) continue;
+      const key = `${from}
+${to}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ from, to });
+    }
+    return out.sort((a, b) => (a.to + a.from < b.to + b.from ? -1 : 1));
+  };
+
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  return {
+    dir,
+    files: members.map((p) => {
+      const f = byPath.get(p)!;
+      return { path: p, sha256: f.sha256, kind: f.file_roles[0]?.role ?? categoryOf(f), lines: f.lines };
+    }),
+    incoming: crossing(false),
+    outgoing: crossing(true),
+  };
 }

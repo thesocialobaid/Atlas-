@@ -6,12 +6,16 @@
 //
 // Plain server code: no Next, no React, runnable from a script.
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listFiles } from "../../parser/files.ts";
 import { parseRepository } from "../../parser/index.ts";
+import { LABEL_FRAMEWORK } from "../../parser/adapters/taxonomy.ts";
 import { OUTPUT_VERSION, type ParseResult } from "../../parser/types.ts";
+import { AiUnavailable, flushTraces } from "../ai/client.ts";
+import { LABEL_HEAD_LINES, labelFiles, type ToLabel } from "../ai/label.ts";
+import { categoryOf } from "../map/categories.ts";
 import type { PipelineDb } from "./db.ts";
 import { downloadArchive, parseRepoUrl, resolveCommit, RunError, type RepoRef } from "./github.ts";
 
@@ -125,6 +129,38 @@ export async function startAnalysis(
 }
 
 /**
+ * Re-analyses a repository already analysed: the deliberate act startAnalysis
+ * leaves out. A new analysis is queued for the same project; the old one stays
+ * as it was. If a run for the project is already queued or running, that one
+ * is returned instead of starting a second.
+ */
+export async function startReanalysis(
+  db: PipelineDb,
+  orgId: string,
+  projectId: string,
+): Promise<{ analysisId: string; existing: boolean }> {
+  const { data, error } = await db
+    .from("analyses")
+    .insert({ org_id: orgId, project_id: projectId })
+    .select("id")
+    .single();
+  if (error?.code === "23505") {
+    const active = await db
+      .from("analyses")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("org_id", orgId)
+      .in("status", ["queued", "running"])
+      .limit(1);
+    if (active.error) failed("look up the analysis", active.error.message);
+    if (active.data[0]) return { analysisId: active.data[0].id, existing: true };
+    failed("create the analysis", "another run was starting and then couldn't be found");
+  }
+  if (error) failed("create the analysis", error.message);
+  return { analysisId: data.id, existing: false };
+}
+
+/**
  * Runs a queued analysis to completion or to a recorded failure. Never
  * throws for a failure of the run itself: that's written to the row. It
  * throws only if the row can't be found, or the failure can't be recorded.
@@ -183,7 +219,9 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
     );
 
     await report("storing", `Storing ${result.files.length} files and ${result.edges.length} connections`);
-    await store(db, orgId, analysisId, result);
+    const ids = await store(db, orgId, analysisId, result);
+
+    const labelNote = await label(db, orgId, dir, result, ids, report);
 
     const done = await db
       .from("analyses")
@@ -197,6 +235,7 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
         adapters: result.adapters,
         routes_withheld: result.routesWithheld,
         parser_version: OUTPUT_VERSION,
+        label_note: labelNote,
       })
       .eq("id", analysisId)
       .eq("org_id", orgId);
@@ -217,7 +256,75 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
     onStage(stage, `Failed: ${message}`);
   } finally {
     if (dir) await rm(dir, { recursive: true, force: true });
+    await flushTraces();
   }
+}
+
+/**
+ * Gives a role to the code files no convention recognised, from the model,
+ * restricted to roles that aren't structural. Labelling doesn't fail the run:
+ * the map is complete without it. What happened is returned as a sentence the
+ * map shows, so files left unlabelled are counted with the reason. The one
+ * failure that does stop the run is being unable to remove half-stored
+ * labels, since the map would then show labels its note doesn't count.
+ */
+async function label(
+  db: PipelineDb,
+  orgId: string,
+  dir: string,
+  result: ParseResult,
+  ids: Map<string, string>,
+  report: (stage: Stage, message: string) => Promise<void>,
+): Promise<string | null> {
+  const candidates = result.files.filter((f) => f.role === null && f.status === "parsed" && categoryOf(f) === "code");
+  if (candidates.length === 0) return null;
+  await report("labelling", `Labelling ${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised`);
+
+  const notLabelled = (reason: string) =>
+    `${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised weren't labelled: ${reason}`.slice(0, 500);
+
+  let labelled;
+  try {
+    const files: ToLabel[] = [];
+    for (const f of candidates) {
+      const text = await readFile(join(dir, f.path), "utf8");
+      files.push({ path: f.path, sha256: f.sha256, head: text.split("\n").slice(0, LABEL_HEAD_LINES).join("\n") });
+    }
+    labelled = await labelFiles(db, orgId, files);
+  } catch (e) {
+    return notLabelled(e instanceof AiUnavailable ? e.message : `labelling stopped: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Labels are stored all or none: a half-stored set would make the note's
+  // counts wrong. On a failure the ones already written are removed.
+  const labelIds = [...labelled.roles.keys()].map((path) => ids.get(path)).filter((id): id is string => id !== undefined);
+  try {
+    for (const rows of chunks([...labelled.roles])) {
+      const { error } = await db.from("file_roles").insert(
+        rows.map(([path, role]) => ({
+          org_id: orgId,
+          file_id: ids.get(path) ?? failed("store labels", `no stored file for ${path}`),
+          role,
+          framework: LABEL_FRAMEWORK,
+          source: "label",
+        })),
+      );
+      if (error) failed("store labels", error.message);
+    }
+  } catch (e) {
+    for (const rows of chunks(labelIds)) {
+      const { error } = await db.from("file_roles").delete().eq("org_id", orgId).eq("source", "label").in("file_id", rows);
+      if (error) throw new Error(`Labels couldn't be stored, and removing the ones that were also failed: ${error.message}`);
+    }
+    return notLabelled(`the labels couldn't be stored: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const parts = [`Labelled ${labelled.roles.size} of ${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised`];
+  if (labelled.unsure > 0) parts.push(`${labelled.unsure} left unlabelled: the model gave them no allowed role`);
+  if (labelled.failed) parts.push(`${labelled.failed.count} not labelled: ${labelled.failed.reason}`);
+  const note = `${parts.join("; ")}.`.slice(0, 500);
+  await report("labelling", note);
+  return note;
 }
 
 /**
@@ -225,7 +332,7 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
  * by id. If any insert fails, everything this analysis wrote is removed so a
  * failed analysis never shows a partial map.
  */
-async function store(db: PipelineDb, orgId: string, analysisId: string, result: ParseResult): Promise<void> {
+async function store(db: PipelineDb, orgId: string, analysisId: string, result: ParseResult): Promise<Map<string, string>> {
   try {
     const ids = new Map<string, string>();
     for (const rows of chunks(result.files)) {
@@ -306,6 +413,7 @@ async function store(db: PipelineDb, orgId: string, analysisId: string, result: 
       );
       if (error) failed("store routes", error.message);
     }
+    return ids;
   } catch (e) {
     // Files cascade to edges, imports, roles and routes.
     const { error } = await db.from("files").delete().eq("analysis_id", analysisId).eq("org_id", orgId);

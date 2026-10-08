@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import type { ExplainResult } from "@/app/map/[id]/actions";
+import type { Freshness } from "@/lib/freshness";
 import { CATEGORY_LABEL, type Category } from "@/lib/map/categories";
+import { renderProse, type Inline, type Known } from "@/lib/map/prose";
 import type { FileDetail, FolderDetail, Ranked, Summary } from "@/lib/map/detail";
 import { INSIGHT_TEXT, LONG_LINES, REACH_DEPTH, type Direction, type Insights, type Reached } from "@/lib/map/graph";
 import { frameworkName } from "@/parser/adapters/taxonomy";
@@ -18,6 +21,23 @@ const TABS: { id: Tab; label: string }[] = [
 const RANKED_ROWS = 10;
 
 type Go = (path: string) => void;
+
+/** One explanation's state. Freshness only for files: null for a folder, "checking" while GitHub is asked. */
+export type Asked =
+  | { status: "asking" }
+  | { status: "failed"; message: string }
+  | { status: "done"; answer: Extract<ExplainResult, { ok: true }>; freshness: Freshness | "checking" | null };
+
+export type ExplanationProps = {
+  /** The selection's explanation, if one was asked for. */
+  asked: Asked | undefined;
+  onExplain: () => void;
+  known: Known;
+  onGoFolder: (dir: string) => void;
+  onReanalyse: () => void;
+  reanalysing: boolean;
+  reanalyseError: string | null;
+};
 
 /** Which walk is showing for the selected file, and what it found. */
 export type ReachView = { direction: Direction | null; found: Reached[] | null };
@@ -37,6 +57,8 @@ type Props = {
   onReach: (direction: Direction | null) => void;
   onGo: Go;
   onClear: () => void;
+  labelNote: string | null;
+  explanation: ExplanationProps;
 };
 
 export function DetailPane(props: Props) {
@@ -92,10 +114,14 @@ export function DetailPane(props: Props) {
               onGo={onGo}
             />
           ) : (
-            <NoExplanation what="file" />
+            <Explanation what="file" detail={file} props={props.explanation} onGo={onGo} />
           ))}
         {folder &&
-          (tab === "structure" ? <FolderStructure detail={folder} /> : <NoExplanation what="folder" />)}
+          (tab === "structure" ? (
+            <FolderStructure detail={folder} />
+          ) : (
+            <Explanation what="folder" detail={folder} props={props.explanation} onGo={onGo} />
+          ))}
       </div>
     </div>
   );
@@ -124,7 +150,7 @@ function TabButton({ id, tab, onTab, children }: { id: Tab; tab: Tab; onTab: (t:
 // ---------------------------------------------------------------------------
 // Nothing selected: the repository as a whole. The pane's resting state.
 
-function Overview({ name, summary, insights, insightsOpen, onInsightsOpen, categories, onGo }: Props) {
+function Overview({ name, summary, labelNote, insights, insightsOpen, onInsightsOpen, categories, onGo }: Props) {
   const { importsBy } = summary;
   const importParts = [
     [importsBy.resolved, "to a file in this repository"],
@@ -183,6 +209,11 @@ function Overview({ name, summary, insights, insightsOpen, onInsightsOpen, categ
             <Num>{summary.unidentified}</Num>{" "}
             <span className="text-fg-muted">{summary.unidentified === 1 ? "file" : "files"} no convention recognised</span>
           </Fact>
+          {labelNote && (
+            <Fact label="Labels">
+              <span className="text-fg-muted">{labelNote}</span>
+            </Fact>
+          )}
         </dl>
 
         <RankedList
@@ -669,15 +700,152 @@ function FolderStructure({ detail }: { detail: FolderDetail }) {
   );
 }
 
-function NoExplanation({ what }: { what: "file" | "folder" }) {
+function Explanation({
+  what,
+  detail,
+  props,
+  onGo,
+}: {
+  what: "file" | "folder";
+  detail: FileDetail | FolderDetail;
+  props: ExplanationProps;
+  onGo: Go;
+}) {
+  const { asked } = props;
+  const asking = asked?.status === "asking";
+  const title = "file" in detail ? detail.file.path : detail.dir === "." ? "Repository root" : `${detail.dir}/`;
   return (
-    <div className="px-3 py-6 text-xs">
-      <p className="font-medium">No explanation yet</p>
-      <p className="mt-1 leading-5 text-fg-muted">
-        Nothing has been written for this {what}. Its structure, taken straight from the parser, is on the Structure
-        tab.
-      </p>
+    <div className="px-3 pt-3 pb-4 text-xs">
+      <div className="flex items-start gap-2">
+        <p className="min-w-0 flex-1 font-mono leading-4 font-medium break-all">{title}</p>
+        <button
+          type="button"
+          onClick={props.onExplain}
+          disabled={asking}
+          className="h-6 shrink-0 rounded-control border border-border px-2 font-medium hover:bg-surface-2 disabled:text-fg-muted"
+        >
+          {asked?.status === "done" || asked?.status === "failed" ? "Explain again" : "Explain"}
+        </button>
+      </div>
+
+      {asked === undefined && (
+        <p className="mt-2 leading-5 text-fg-muted">
+          {what === "file"
+            ? "Written by the model from this file's source and the files it imports and is imported by, exactly as the parser found them."
+            : "Written by the model from every file in this folder and every import that crosses its edge, exactly as the parser found them."}
+        </p>
+      )}
+      {asking && <p className="mt-2 text-fg-muted">Asking the model…</p>}
+      {asked?.status === "failed" && (
+        <p role="alert" className="mt-2 leading-5 text-danger">
+          {asked.message}
+        </p>
+      )}
+      {asked?.status === "done" && (
+        <>
+          <Prose text={asked.answer.body} known={props.known} onGo={onGo} onGoFolder={props.onGoFolder} />
+          <p className="mt-3 text-[11px] leading-4 text-fg-muted">
+            {asked.answer.cached ? "From the cache" : "Written just now"} ·{" "}
+            <span className="font-mono">{asked.answer.model}</span>
+            {asked.answer.untraced && <> · Not traced: {asked.answer.untraced}</>}
+          </p>
+          {asked.freshness !== null && <FreshnessNote freshness={asked.freshness} props={props} />}
+        </>
+      )}
     </div>
+  );
+}
+
+const STALE_TEXT = {
+  changed: "This file has changed since it was analysed, so this explanation is stale.",
+  gone: "This file is no longer on the default branch, so this explanation is stale.",
+  moved: "The repository has moved past the analysed commit. This file is unchanged.",
+} as const;
+
+function FreshnessNote({ freshness, props }: { freshness: Freshness | "checking"; props: ExplanationProps }) {
+  if (freshness === "checking") return <p className="mt-1 text-[11px] text-fg-muted">Checking GitHub for changes…</p>;
+  if (freshness.state === "current") {
+    return <p className="mt-1 text-[11px] text-fg-muted">The repository is still at the analysed commit.</p>;
+  }
+  if (freshness.state === "unknown") {
+    return (
+      <p className="mt-1 text-[11px] leading-4 text-fg-muted">Couldn&apos;t check GitHub for changes: {freshness.reason}</p>
+    );
+  }
+  return (
+    <div className="mt-2 rounded-control border border-border px-2.5 py-2">
+      <p className="leading-5">{STALE_TEXT[freshness.state]}</p>
+      <p className="font-mono text-[11px] text-fg-muted">now at {freshness.head.slice(0, 7)}</p>
+      <button
+        type="button"
+        onClick={props.onReanalyse}
+        disabled={props.reanalysing}
+        className="mt-1.5 h-6 rounded-control border border-border px-2 font-medium hover:bg-surface-2 disabled:text-fg-muted"
+      >
+        {props.reanalysing ? "Starting…" : "Re-analyse"}
+      </button>
+      {props.reanalyseError && (
+        <p role="alert" className="mt-1 text-[11px] text-danger">
+          {props.reanalyseError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The model's prose: paragraphs, bullets, inline code and bold, with every repository path a link. */
+function Prose({ text, known, onGo, onGoFolder }: { text: string; known: Known; onGo: Go; onGoFolder: Go }) {
+  const blocks = renderProse(text, known);
+  const parts = (list: Inline[]): ReactNode =>
+    list.map((p, i) => {
+      if (p.t === "text") return <span key={i}>{p.v}</span>;
+      if (p.t === "code") {
+        return (
+          <code key={i} className="rounded-[3px] bg-surface-2 px-1 font-mono text-[11px]">
+            {p.v}
+          </code>
+        );
+      }
+      if (p.t === "bold") {
+        return (
+          <strong key={i} className="font-semibold">
+            {parts(p.parts)}
+          </strong>
+        );
+      }
+      return <PathLink key={i} path={p.v} onGo={p.kind === "file" ? onGo : onGoFolder} folder={p.kind === "folder"} />;
+    });
+  return (
+    <div className="mt-2 space-y-2 leading-5">
+      {blocks.map((b, i) =>
+        b.t === "p" ? (
+          <p key={i}>{parts(b.parts)}</p>
+        ) : (
+          <ul key={i} className="list-disc space-y-1 pl-4 marker:text-fg-muted">
+            {b.items.map((item, j) => (
+              <li key={j}>{parts(item)}</li>
+            ))}
+          </ul>
+        ),
+      )}
+    </div>
+  );
+}
+
+/** A path in prose that moves the map, and lights its file on the map when hovered. */
+function PathLink({ path, onGo, folder }: { path: string; onGo: Go; folder: boolean }) {
+  const { setHover } = useHover();
+  return (
+    <button
+      type="button"
+      onClick={() => onGo(path)}
+      onMouseEnter={folder ? undefined : () => setHover({ from: "pane", paths: new Set([path]) })}
+      onMouseLeave={folder ? undefined : () => setHover(null)}
+      title={folder ? `Select the folder ${path}/` : `Select ${path}`}
+      className="font-mono text-[11px] break-all text-accent hover:underline"
+    >
+      {folder ? `${path}/` : path}
+    </button>
   );
 }
 

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { explainFileAction, explainFolderAction, freshnessAction, reanalyseAction } from "@/app/map/[id]/actions";
 import { categoryOf } from "@/lib/map/categories";
 import { describeFile, describeFolder, summarise } from "@/lib/map/detail";
 import { fold } from "@/lib/map/fold";
@@ -14,7 +15,7 @@ import { Logo } from "../icons";
 import { ThemeControl } from "../../theme-control";
 import { MapCanvas, type Base } from "./canvas";
 import { CoverageBanner } from "./coverage-banner";
-import { DetailPane, type Tab } from "./pane";
+import { DetailPane, type Asked, type Tab } from "./pane";
 import { RoutesTable } from "./routes-table";
 import { HoverContext, type Hover, type Selection } from "./state";
 
@@ -23,10 +24,12 @@ import { HoverContext, type Hover, type Selection } from "./state";
 // shows is derived from the result already in the browser: selecting fires no
 // request.
 export function Workspace({
+  analysisId,
   name,
   result,
   theme,
 }: {
+  analysisId: string;
   name: string;
   result: MapInput;
   theme: Theme;
@@ -58,6 +61,18 @@ export function Workspace({
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [filter, setFilter] = useState<RailEntry | null>(null);
   const [showRoutes, setShowRoutes] = useState(false);
+  // Every explanation asked for, by what it explains. Kept here rather than
+  // in the pane, so moving the selection away and back shows it again
+  // without a second click: a cache nobody can feel is not a cache.
+  const [answers, setAnswers] = useState<ReadonlyMap<string, Asked>>(new Map());
+  const [reanalysing, startReanalyse] = useTransition();
+  const [reanalyseError, setReanalyseError] = useState<string | null>(null);
+
+  // What the prose may link to: every file, and every folder drawn as a box.
+  const known = useMemo(
+    () => ({ files: new Set(files.keys()), folders: new Set([...base.folded.groups.keys()].filter((d) => d !== ".")) }),
+    [files, base],
+  );
 
   // Every handler that swaps what's under the pointer clears the hover, since
   // the element that would have sent mouseleave is gone.
@@ -111,6 +126,43 @@ export function Workspace({
     },
     [base],
   );
+
+  const goToFolder = useCallback((dir: string) => {
+    setSelection({ kind: "group", dir });
+    setHover(null);
+  }, []);
+
+  const answerKey =
+    selection?.kind === "file" ? `file:${selection.path}` : selection?.kind === "group" ? `folder:${selection.dir}` : null;
+
+  const explain = useCallback(async () => {
+    if (!selection || !answerKey) return;
+    const key = answerKey;
+    const update = (a: Asked) => setAnswers((prev) => new Map(prev).set(key, a));
+    update({ status: "asking" });
+    const res =
+      selection.kind === "file"
+        ? await explainFileAction(analysisId, selection.path)
+        : await explainFolderAction(analysisId, selection.dir);
+    if (!res.ok) return update({ status: "failed", message: res.message });
+    update({ status: "done", answer: res, freshness: selection.kind === "file" ? "checking" : null });
+    if (selection.kind === "file") {
+      const freshness = await freshnessAction(analysisId, selection.path);
+      setAnswers((prev) => {
+        const current = prev.get(key);
+        return current?.status === "done" ? new Map(prev).set(key, { ...current, freshness }) : prev;
+      });
+    }
+  }, [selection, answerKey, analysisId]);
+
+  const reanalyse = useCallback(() => {
+    setReanalyseError(null);
+    startReanalyse(async () => {
+      // Redirects to the new run's progress; it only returns if it couldn't start.
+      const res = await reanalyseAction(analysisId);
+      setReanalyseError(res.error);
+    });
+  }, [analysisId]);
 
   const file = useMemo(
     () => (selection?.kind === "file" ? describeFile(result, files, base.edges, selection.path) : null),
@@ -233,6 +285,7 @@ export function Workspace({
         <DetailPane
           name={name}
           summary={summary}
+          labelNote={result.labelNote ?? null}
           insights={insights}
           insightsOpen={insightsOpen}
           onInsightsOpen={setInsightsOpen}
@@ -245,6 +298,15 @@ export function Workspace({
           onReach={setDirection}
           onGo={goToFile}
           onClear={clear}
+          explanation={{
+            asked: answerKey ? answers.get(answerKey) : undefined,
+            onExplain: explain,
+            known,
+            onGoFolder: goToFolder,
+            onReanalyse: reanalyse,
+            reanalysing,
+            reanalyseError,
+          }}
         />
       </aside>
     </HoverContext.Provider>
