@@ -23,11 +23,17 @@ export function cacheKey(kind: CacheKind, promptVersion: number, shown: unknown)
 }
 
 /**
- * Cached bodies for these keys. Its own traced step, always called inside the
- * traced operation it serves: a hit then shows as a run that read the cache
- * and called no model.
+ * Cached bodies for these keys, in this organization. Its own traced step,
+ * always called inside the traced operation it serves: a hit then shows as a
+ * run that read the cache and called no model.
+ *
+ * The organization filter is not redundant. A member's client is already held
+ * to their organization by the policy, but the pipeline reads with the secret
+ * key, which bypasses it. Keys are hashes of public content, so without the
+ * filter one organization could plant an answer another organization's run
+ * would read as its own.
  */
-export async function readCache(db: Db, keys: string[]): Promise<Map<string, string>> {
+export async function readCache(db: Db, orgId: string, keys: string[]): Promise<Map<string, string>> {
   // The database client stays out of the trace: only the keys are recorded.
   const read = traced("cache read", async (asked: string[]) => {
     // A plain object rather than a Map, so the trace shows which keys hit.
@@ -37,6 +43,7 @@ export async function readCache(db: Db, keys: string[]): Promise<Map<string, str
       const { data, error } = await db
         .from("model_cache")
         .select("cache_key, body")
+        .eq("org_id", orgId)
         .in("cache_key", asked.slice(i, i + 200))
         .limit(200);
       if (error) throw new Error(`Couldn't read the cache: ${error.message}`);

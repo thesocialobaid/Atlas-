@@ -82,7 +82,7 @@ export async function labelFiles(db: Db, orgId: string, files: ToLabel[]): Promi
   const run = traced("label files", async (paths: string[]): Promise<{ labelled: number; unsure: number; failed: number }> => {
     const asked = paths.map((p) => byPath.get(p)!);
     const keyOf = new Map(asked.map((f) => [f.path, cacheKey("label", LABEL_PROMPT_VERSION, { path: f.path, sha256: f.sha256 })]));
-    const cached = await readCache(db, [...keyOf.values()]);
+    const cached = await readCache(db, orgId, [...keyOf.values()]);
     const record = (path: string, role: string) => {
       if (isLabelRole(role)) result.roles.set(path, role);
       else result.unsure++;

@@ -105,7 +105,7 @@ export async function explainFile(
   const run = traced("explain file", async (f: FileToExplain): Promise<Explained> => {
     // The stored hash stands for the source, so a hit needs no fetch.
     const key = cacheKey("file", FILE_PROMPT_VERSION, f);
-    const hit = (await readCache(db, [key])).get(key);
+    const hit = (await readCache(db, orgId, [key])).get(key);
     if (hit !== undefined) return { body: hit, cached: true };
 
     const source = await traced("read source", async (path: string) => ({ text: await readSource(path) }), "tool")(f.path);
@@ -137,7 +137,7 @@ export type FolderToExplain = {
 export async function explainFolder(db: Db, orgId: string, folder: FolderToExplain): Promise<Explained> {
   const run = traced("explain folder", async (f: FolderToExplain): Promise<Explained> => {
     const key = cacheKey("folder", FOLDER_PROMPT_VERSION, f);
-    const hit = (await readCache(db, [key])).get(key);
+    const hit = (await readCache(db, orgId, [key])).get(key);
     if (hit !== undefined) return { body: hit, cached: true };
 
     const pairs = (list: { from: string; to: string }[]) => listed(list.map((e) => `${e.from} → ${e.to}`));

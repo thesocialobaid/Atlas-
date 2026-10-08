@@ -262,9 +262,11 @@ export async function runAnalysis(db: PipelineDb, analysisId: string, onStage: O
 
 /**
  * Gives a role to the code files no convention recognised, from the model,
- * restricted to roles that aren't structural. Labelling never fails the run:
+ * restricted to roles that aren't structural. Labelling doesn't fail the run:
  * the map is complete without it. What happened is returned as a sentence the
- * map shows, so files left unlabelled are counted with the reason.
+ * map shows, so files left unlabelled are counted with the reason. The one
+ * failure that does stop the run is being unable to remove half-stored
+ * labels, since the map would then show labels its note doesn't count.
  */
 async function label(
   db: PipelineDb,
@@ -278,31 +280,43 @@ async function label(
   if (candidates.length === 0) return null;
   await report("labelling", `Labelling ${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised`);
 
-  const files: ToLabel[] = [];
-  for (const f of candidates) {
-    const text = await readFile(join(dir, f.path), "utf8");
-    files.push({ path: f.path, sha256: f.sha256, head: text.split("\n").slice(0, LABEL_HEAD_LINES).join("\n") });
-  }
+  const notLabelled = (reason: string) =>
+    `${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised weren't labelled: ${reason}`.slice(0, 500);
 
   let labelled;
   try {
+    const files: ToLabel[] = [];
+    for (const f of candidates) {
+      const text = await readFile(join(dir, f.path), "utf8");
+      files.push({ path: f.path, sha256: f.sha256, head: text.split("\n").slice(0, LABEL_HEAD_LINES).join("\n") });
+    }
     labelled = await labelFiles(db, orgId, files);
   } catch (e) {
-    const reason = e instanceof AiUnavailable ? e.message : `labelling stopped: ${e instanceof Error ? e.message : String(e)}`;
-    return `${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised weren't labelled: ${reason}`.slice(0, 500);
+    return notLabelled(e instanceof AiUnavailable ? e.message : `labelling stopped: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  for (const rows of chunks([...labelled.roles])) {
-    const { error } = await db.from("file_roles").insert(
-      rows.map(([path, role]) => ({
-        org_id: orgId,
-        file_id: ids.get(path) ?? failed("store labels", `no stored file for ${path}`),
-        role,
-        framework: LABEL_FRAMEWORK,
-        source: "label",
-      })),
-    );
-    if (error) failed("store labels", error.message);
+  // Labels are stored all or none: a half-stored set would make the note's
+  // counts wrong. On a failure the ones already written are removed.
+  const labelIds = [...labelled.roles.keys()].map((path) => ids.get(path)).filter((id): id is string => id !== undefined);
+  try {
+    for (const rows of chunks([...labelled.roles])) {
+      const { error } = await db.from("file_roles").insert(
+        rows.map(([path, role]) => ({
+          org_id: orgId,
+          file_id: ids.get(path) ?? failed("store labels", `no stored file for ${path}`),
+          role,
+          framework: LABEL_FRAMEWORK,
+          source: "label",
+        })),
+      );
+      if (error) failed("store labels", error.message);
+    }
+  } catch (e) {
+    for (const rows of chunks(labelIds)) {
+      const { error } = await db.from("file_roles").delete().eq("org_id", orgId).eq("source", "label").in("file_id", rows);
+      if (error) throw new Error(`Labels couldn't be stored, and removing the ones that were also failed: ${error.message}`);
+    }
+    return notLabelled(`the labels couldn't be stored: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const parts = [`Labelled ${labelled.roles.size} of ${candidates.length} ${candidates.length === 1 ? "file" : "files"} no convention recognised`];
