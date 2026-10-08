@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AiUnavailable, MODEL, tracingStatus } from "@/lib/ai/client";
 import { explainFile, explainFolder } from "@/lib/ai/explain";
-import { getAnalysis, getFileToExplain, getFolderToExplain } from "@/lib/analyses";
+import { getAnalysis, getFileStamp, getFileToExplain, getFolderToExplain } from "@/lib/analyses";
 import { checkFreshness, type Freshness } from "@/lib/freshness";
 import { createPipelineDb } from "@/lib/pipeline/db";
 import { readFileAt, RunError } from "@/lib/pipeline/github";
@@ -80,9 +80,10 @@ export async function explainFolderAction(analysisId: string, dir: string): Prom
 
 /** Whether an explained file still matches the repository on GitHub. */
 export async function freshnessAction(analysisId: string, path: string): Promise<Freshness> {
-  const loaded = await getFileToExplain(analysisId, path);
-  if (!loaded) return { state: "unknown", reason: "that file isn't in this analysis" };
-  return checkFreshness(loaded.repo, loaded.commit, path, loaded.explain.sha256);
+  // Only the stored hash and the commit are needed, not the neighbours.
+  const stamp = await getFileStamp(analysisId, path);
+  if (!stamp) return { state: "unknown", reason: "that file isn't in this analysis" };
+  return checkFreshness(stamp.repo, stamp.commit, path, stamp.file.sha256);
 }
 
 /**
