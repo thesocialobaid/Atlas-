@@ -254,46 +254,68 @@ export async function getAnalysisMap(id: string) {
  * analysis or the file isn't readable to this organization.
  */
 export async function getFileToExplain(analysisId: string, path: string) {
-  const analysis = await getAnalysis(analysisId);
-  if (!analysis || analysis.status !== "complete" || !analysis.project || !analysis.commit_sha) return null;
+  const stamp = await getFileStamp(analysisId, path);
+  if (!stamp) return null;
+  const { file } = stamp;
   const db = createSupabase();
-  const { data: file, error } = await db
-    .from("files")
-    .select("id, path, sha256, language, lines, file_roles(role)")
-    .eq("analysis_id", analysisId)
-    .eq("path", path)
-    .maybeSingle();
-  if (error) fail("the file", error.message);
-  if (!file) return null;
 
+  // Each round trip to the database costs about a quarter of a second, so the
+  // neighbours' paths come embedded in the edge rows rather than in a second
+  // query, and both directions are asked for at once.
   const [out, into] = await Promise.all([
     everyRow("imports of the file", (from, to) =>
-      db.from("edges").select("id, to_file_id").eq("from_file_id", file.id).order("id").range(from, to),
+      db
+        .from("edges")
+        .select("id, to:files!edges_to_file_id_org_id_fkey(path)")
+        .eq("from_file_id", file.id)
+        .order("id")
+        .range(from, to),
     ),
     everyRow("importers of the file", (from, to) =>
-      db.from("edges").select("id, from_file_id").eq("to_file_id", file.id).order("id").range(from, to),
+      db
+        .from("edges")
+        .select("id, from:files!edges_from_file_id_org_id_fkey(path)")
+        .eq("to_file_id", file.id)
+        .order("id")
+        .range(from, to),
     ),
   ]);
-  const ids = [...new Set([...out.map((e) => e.to_file_id), ...into.map((e) => e.from_file_id)])];
-  const pathOf = new Map<string, string>();
-  for (let i = 0; i < ids.length; i += 200) {
-    const { data, error: e } = await db.from("files").select("id, path").in("id", ids.slice(i, i + 200)).limit(200);
-    if (e) fail("the file's neighbours", e.message);
-    for (const row of data) pathOf.set(row.id, row.path);
-  }
-  const paths = (list: string[]) =>
-    [...new Set(list.map((id) => pathOf.get(id) ?? fail("the file's neighbours", `no file ${id}`)))].sort();
+  // One path per neighbour: an import and a re-export of the same file are one connection here.
+  const paths = (list: string[]) => [...new Set(list)].sort();
 
   const explain: FileToExplain = {
     path: file.path,
     sha256: file.sha256,
     language: file.language,
     role: file.file_roles[0]?.role ?? null,
-    imports: paths(out.map((e) => e.to_file_id)),
-    importedBy: paths(into.map((e) => e.from_file_id)),
+    imports: paths(out.map((e) => e.to?.path ?? fail("the file's imports", `edge ${e.id} has no file`))),
+    importedBy: paths(into.map((e) => e.from?.path ?? fail("the file's importers", `edge ${e.id} has no file`))),
   };
+  return { ...stamp, explain };
+}
+
+/**
+ * The analysed commit, the repository and one file's stored row: what the
+ * staleness check needs, and the start of what explaining needs. The two
+ * reads don't depend on each other, so they're made at once.
+ */
+export async function getFileStamp(analysisId: string, path: string) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(analysisId)) return null;
+  const db = createSupabase();
+  const [analysis, fileRead] = await Promise.all([
+    getAnalysis(analysisId),
+    db
+      .from("files")
+      .select("id, path, sha256, language, lines, file_roles(role)")
+      .eq("analysis_id", analysisId)
+      .eq("path", path)
+      .maybeSingle(),
+  ]);
+  if (fileRead.error) fail("the file", fileRead.error.message);
+  const file = fileRead.data;
+  if (!analysis || analysis.status !== "complete" || !analysis.project || !analysis.commit_sha || !file) return null;
   return {
-    explain,
+    file,
     binary: file.lines === null,
     repo: { owner: analysis.project.repo_owner, name: analysis.project.repo_name },
     commit: analysis.commit_sha,
@@ -306,24 +328,29 @@ export async function getFileToExplain(analysisId: string, path: string) {
  * and every stored edge that crosses its boundary.
  */
 export async function getFolderToExplain(analysisId: string, dir: string): Promise<FolderToExplain | null> {
-  const analysis = await getAnalysis(analysisId);
-  if (!analysis || analysis.status !== "complete") return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(analysisId)) return null;
   const db = createSupabase();
-  const files = await everyRow("files", (from, to) =>
-    db
-      .from("files")
-      .select("id, path, folder, language, lines, sha256, file_roles(role)")
-      .eq("analysis_id", analysisId)
-      .order("path")
-      .range(from, to),
-  );
+  // None of the three reads depends on another, so they're made at once: each
+  // round trip costs about a quarter of a second.
+  const [analysis, files, edges] = await Promise.all([
+    getAnalysis(analysisId),
+    everyRow("files", (from, to) =>
+      db
+        .from("files")
+        .select("id, path, folder, language, lines, sha256, file_roles(role)")
+        .eq("analysis_id", analysisId)
+        .order("path")
+        .range(from, to),
+    ),
+    everyRow("edges", (from, to) =>
+      db.from("edges").select("id, from_file_id, to_file_id").eq("analysis_id", analysisId).order("id").range(from, to),
+    ),
+  ]);
+  if (!analysis || analysis.status !== "complete") return null;
   const members = fold(files).groups.get(dir);
   if (!members) return null;
   const inside = new Set(members);
   const pathOf = new Map(files.map((f) => [f.id, f.path]));
-  const edges = await everyRow("edges", (from, to) =>
-    db.from("edges").select("id, from_file_id, to_file_id").eq("analysis_id", analysisId).order("id").range(from, to),
-  );
 
   // One row per file pair: an import and a re-export of the same file are one connection here.
   const crossing = (wantFromInside: boolean) => {
