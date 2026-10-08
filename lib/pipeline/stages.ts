@@ -1,7 +1,7 @@
 // The run's stages, in order. Its own module so the browser can name them
 // without importing the pipeline, and the parser with it.
 
-export const STAGES = ["fetching", "selecting", "parsing", "storing"] as const;
+export const STAGES = ["fetching", "selecting", "parsing", "storing", "labelling"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export const STAGE_LABEL: Record<Stage, string> = {
@@ -9,6 +9,7 @@ export const STAGE_LABEL: Record<Stage, string> = {
   selecting: "Selecting files",
   parsing: "Parsing imports",
   storing: "Storing the map",
+  labelling: "Labelling unrecognised files",
 };
 
 export function isStage(value: string | null): value is Stage {

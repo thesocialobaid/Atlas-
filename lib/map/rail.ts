@@ -4,7 +4,7 @@
 // claimed fall into the generic kinds after them. Pure, and safe for the
 // browser: the taxonomy imports nothing.
 
-import { frameworkName, rolesFor } from "../../parser/adapters/taxonomy.ts";
+import { frameworkName, LABEL_FRAMEWORK, rolesFor } from "../../parser/adapters/taxonomy.ts";
 import type { RepoFile } from "../../parser/types.ts";
 import { CATEGORIES, CATEGORY_LABEL, categoryOf, type Category } from "./categories.ts";
 
@@ -34,7 +34,10 @@ export function buildRail(
   adapters: readonly string[],
   files: readonly Pick<RepoFile, "path" | "language" | "role" | "framework">[],
 ): Rail {
-  const known = new Set(adapters.flatMap((a) => rolesFor(a).map((r) => roleKey(a, r.role))));
+  // Roles the model gave come after every framework's, under their own
+  // heading, so a label is never mistaken for what a convention decided.
+  const sources = files.some((f) => f.framework === LABEL_FRAMEWORK) ? [...adapters, LABEL_FRAMEWORK] : adapters;
+  const known = new Set(sources.flatMap((a) => rolesFor(a).map((r) => roleKey(a, r.role))));
   const entryOf = new Map<string, string>();
   const counts = new Map<string, number>();
   for (const f of files) {
@@ -43,7 +46,7 @@ export function buildRail(
     entryOf.set(f.path, key);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const groups: RailGroup[] = adapters
+  const groups: RailGroup[] = sources
     .filter((a) => rolesFor(a).length > 0)
     .map((a) => ({
       heading: frameworkName(a) ?? a,

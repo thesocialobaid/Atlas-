@@ -271,6 +271,22 @@ const VAPOR = [
   { role: "migration", label: "Migrations" },
 ] as const satisfies readonly RoleDef[];
 
+// Not an adapter: roles the model gave files no convention recognised. Only
+// roles that aren't structural, so a label never adds a route or an entry
+// point. The labeller reads its allowed answers from here.
+export const LABEL = [
+  { role: "service", label: "Services" },
+  { role: "repository", label: "Repositories" },
+  { role: "model", label: "Models" },
+  { role: "util", label: "Utilities" },
+  { role: "config", label: "Config" },
+  { role: "component", label: "Components" },
+  { role: "hook", label: "Hooks" },
+] as const satisfies readonly RoleDef[];
+
+/** The framework name stored with a role the model gave. */
+export const LABEL_FRAMEWORK = "label";
+
 type RoleOf<T extends readonly RoleDef[]> = T[number]["role"];
 export type ReactRole = RoleOf<typeof REACT>;
 export type NextjsRole = RoleOf<typeof NEXTJS>;
@@ -284,6 +300,7 @@ export type ServerRole = RoleOf<typeof SERVER>;
 export type RailsRole = RoleOf<typeof RAILS>;
 export type LaravelRole = RoleOf<typeof LARAVEL>;
 export type ExpressRole = RoleOf<typeof EXPRESS>;
+export type LabelRole = RoleOf<typeof LABEL>;
 
 // Adapter name, how its users write it, and its rail. Detection order lives
 // with the adapters; this is only names.
@@ -323,6 +340,7 @@ const FRAMEWORKS: readonly (readonly [string, string, readonly RoleDef[]])[] = [
   ["symfony", "Symfony", SYMFONY],
   ["phoenix", "Phoenix", PHOENIX],
   ["vapor", "Vapor", VAPOR],
+  [LABEL_FRAMEWORK, "Labelled by the model", LABEL],
 ];
 
 const BY_NAME = new Map(FRAMEWORKS.map(([name, label, roles]) => [name, { label, roles }]));

@@ -23,5 +23,5 @@ export default async function MapPage({ params }: PageProps<"/map/[id]">) {
   const { analysis, input } = loaded;
   const name = analysis.project ? `${analysis.project.repo_owner}/${analysis.project.repo_name}` : "Unknown repository";
   const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
-  return <MapShell name={name} result={input} theme={theme} />;
+  return <MapShell analysisId={analysis.id} name={name} result={input} theme={theme} />;
 }

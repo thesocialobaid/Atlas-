@@ -9,4 +9,9 @@ import type { ParseResult } from "../../parser/types.ts";
 export type MapInput = Pick<ParseResult, "files" | "edges" | "imports" | "fan" | "coverage" | "adapters" | "routes"> & {
   /** Null for an analysis stored before routes were read. */
   routesWithheld: ParseResult["routesWithheld"] | null;
+  /**
+   * What labelling unrecognised files did, as a sentence. Null when there was
+   * nothing to label; absent for a bare parse result, which is never labelled.
+   */
+  labelNote?: string | null;
 };
