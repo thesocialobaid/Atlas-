@@ -17,6 +17,52 @@ import type { SyntaxNode } from "./tree-sitter.ts";
 // An import never resolves to the file doing the importing: pkg/logging.py's
 // `import logging` means the standard library, not itself.
 
+// A Python project's own folder is where it runs from, so it's where its
+// absolute imports start. A repository can hold several (backend/ beside
+// frontend/, services side by side); each is recognised by what only a
+// project's root holds: pyproject.toml, setup.py, setup.cfg, manage.py, or a
+// requirements file (requirements/base.txt speaks for the folder above).
+const PROJECT_FILE = /^(pyproject\.toml|setup\.py|setup\.cfg|manage\.py|requirements[^/]*\.(txt|in))$/;
+
+/** Every project folder, deepest first; the repository root is always last. */
+function projectDirs(ctx: Context): string[] {
+  const dirs = new Set<string>();
+  for (const p of ctx.files.keys()) {
+    const parts = p.split("/");
+    if (parts.includes("node_modules")) continue;
+    let dir: string | null = null;
+    if (PROJECT_FILE.test(parts[parts.length - 1])) dir = parts.slice(0, -1).join("/");
+    else if (parts.length >= 2 && parts[parts.length - 2] === "requirements" && /\.(txt|in)$/.test(p)) dir = parts.slice(0, -2).join("/");
+    if (dir) dirs.add(dir);
+  }
+  const deepestFirst = [...dirs].sort((a, b) => b.split("/").length - a.split("/").length || (a < b ? -1 : 1));
+  return [...deepestFirst, ""];
+}
+
+/**
+ * Roots for one file. Imports are searched in each project it sits in,
+ * deepest first, the project folder before its src/ (the two layouts Python
+ * packaging documents). Its module name comes from the innermost root that
+ * holds it, so src/ is tried before its project there.
+ */
+function rootsFor(projects: string[], srcDirs: ReadonlySet<string>, path: string): { search: string[]; naming: string[] } {
+  const search: string[] = [];
+  const naming: string[] = [];
+  for (const d of projects) {
+    if (d !== "" && !path.startsWith(`${d}/`)) continue;
+    const src = d ? `${d}/src` : "src";
+    const hasSrc = srcDirs.has(src);
+    search.push(d, ...(hasSrc ? [src] : []));
+    naming.push(...(hasSrc ? [src] : []), d);
+  }
+  return { search, naming };
+}
+
+function isDirWithPython(ctx: Context, dir: string): boolean {
+  for (const p of ctx.files.keys()) if (p.startsWith(`${dir}/`) && p.endsWith(".py")) return true;
+  return false;
+}
+
 /** Where one file's absolute imports are searched, in order. */
 function searchRoots(ctx: Context, roots: string[], here: string): string[] {
   const isPackage = exists(ctx, [`${here ? `${here}/` : ""}__init__.py`, `${here ? `${here}/` : ""}__init__.pyi`]) !== null;
@@ -59,12 +105,15 @@ export const python: LanguageHandler = {
 
   async analyze(sources: Source[], ctx: Context): Promise<ImportRecord[]> {
     const parser = await parserFor("python");
-    const roots = [""];
-    for (const p of ctx.files.keys()) if (p.startsWith("src/") && p.endsWith(".py")) { roots.push("src"); break; }
+    const projects = projectDirs(ctx);
+    // Whether a project has a src/ layout depends only on the project, and
+    // finding out scans every path, so it's decided once per project.
+    const srcDirs = new Set(projects.map((d) => (d ? `${d}/src` : "src")).filter((src) => isDirWithPython(ctx, src)));
     const out: ImportRecord[] = [];
 
     for (const { file, text } of sources) {
-      file.module = moduleName(file.path, [...roots].reverse());
+      const { search: roots, naming } = rootsFor(projects, srcDirs, file.path);
+      file.module = moduleName(file.path, naming);
       const tree = parser.parse(text);
       file.hadSyntaxErrors = tree.rootNode.hasError;
       const here = posix.dirname(file.path) === "." ? "" : posix.dirname(file.path);

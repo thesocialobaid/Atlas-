@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CATEGORIES, CATEGORY_LABEL, categoryOf, type Category } from "@/lib/map/categories";
+import { categoryOf } from "@/lib/map/categories";
 import { describeFile, describeFolder, summarise } from "@/lib/map/detail";
 import { fold } from "@/lib/map/fold";
 import { insights as findInsights, reach as walk, type Direction } from "@/lib/map/graph";
+import { buildRail, type RailEntry } from "@/lib/map/rail";
 import { fileEdges } from "@/lib/map/view";
 import type { Theme } from "@/lib/theme";
 import type { MapInput } from "@/lib/map/input";
@@ -14,6 +15,7 @@ import { ThemeControl } from "../../theme-control";
 import { MapCanvas, type Base } from "./canvas";
 import { CoverageBanner } from "./coverage-banner";
 import { DetailPane, type Tab } from "./pane";
+import { RoutesTable } from "./routes-table";
 import { HoverContext, type Hover, type Selection } from "./state";
 
 // The map and the detail pane share one selection, one set of open folders
@@ -30,23 +32,20 @@ export function Workspace({
   theme: Theme;
 }) {
   // Derived from the parser's output, never written back into it.
+  const rail = useMemo(() => buildRail(result.adapters, result.files), [result]);
   const base = useMemo<Base>(
     () => ({
       folded: fold(result.files),
       edges: fileEdges(result.edges),
       fanIn: new Map(result.fan.map((f) => [f.path, f.fanIn])),
       categories: new Map(result.files.map((f) => [f.path, categoryOf(f)])),
+      entryOf: rail.entryOf,
     }),
-    [result],
+    [result, rail],
   );
   const files = useMemo(() => new Map(result.files.map((f) => [f.path, f])), [result]);
   const summary = useMemo(() => summarise(result), [result]);
   const insights = useMemo(() => findInsights(result.files, base.edges), [result, base]);
-  const railCounts = useMemo(() => {
-    const counts = new Map<Category, number>();
-    for (const c of base.categories.values()) counts.set(c, (counts.get(c) ?? 0) + 1);
-    return counts;
-  }, [base]);
 
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [selection, setSelection] = useState<Selection>(null);
@@ -57,7 +56,8 @@ export function Workspace({
   // Kept across selections for the same reason: comparing blast radii.
   const [direction, setDirection] = useState<Direction | null>(null);
   const [insightsOpen, setInsightsOpen] = useState(false);
-  const [category, setCategory] = useState<Category | null>(null);
+  const [filter, setFilter] = useState<RailEntry | null>(null);
+  const [showRoutes, setShowRoutes] = useState(false);
 
   // Every handler that swaps what's under the pointer clears the hover, since
   // the element that would have sent mouseleave is gone.
@@ -137,34 +137,67 @@ export function Workspace({
           </Link>
           <span className="truncate font-mono text-xs font-medium">{name}</span>
         </div>
-        {/* Clicking a kind dims the rest of the map rather than removing it, so
-            the shape of the repository stays on screen. */}
-        <ul aria-label="Kinds of file" className="min-h-0 flex-1 overflow-y-auto py-2">
-          {CATEGORIES.filter((c) => railCounts.has(c)).map((c) => (
-            <li key={c}>
-              <button
-                type="button"
-                aria-pressed={category === c}
-                onClick={() => setCategory((cur) => (cur === c ? null : c))}
-                className={`flex h-7 w-full items-center gap-2 px-3 text-left text-xs ${
-                  category === c
-                    ? "bg-surface-2 font-medium"
-                    : category !== null
-                      ? "text-fg-muted hover:bg-surface-2 hover:text-fg"
-                      : "hover:bg-surface-2"
-                }`}
-              >
-                <span
-                  aria-hidden="true"
-                  className="size-2 shrink-0 rounded-[2px]"
-                  style={{ background: `var(--cat-${c})` }}
-                />
-                <span className="flex-1 truncate">{CATEGORY_LABEL[c]}</span>
-                <span className="font-mono text-[11px] tabular-nums text-fg-muted">{railCounts.get(c)}</span>
-              </button>
-            </li>
+        {/* Clicking an entry dims the rest of the map rather than removing it,
+            so the shape of the repository stays on screen. */}
+        <div aria-label="Kinds of file" className="min-h-0 flex-1 overflow-y-auto py-2">
+          {rail.groups.map((group, g) => (
+            <section key={group.heading ?? "kinds"} className={g > 0 ? "mt-2 border-t border-border pt-2" : undefined}>
+              {group.heading && (
+                <h3 className="flex h-6 items-center px-3 text-[11px] font-medium text-fg-muted">{group.heading}</h3>
+              )}
+              <ul>
+                {group.entries.map((entry) => {
+                  const on = filter?.key === entry.key;
+                  return (
+                    <li key={entry.key}>
+                      <button
+                        type="button"
+                        aria-pressed={on}
+                        disabled={entry.count === 0}
+                        onClick={() => {
+                          setFilter(on ? null : entry);
+                          setShowRoutes(false);
+                        }}
+                        className={`flex h-7 w-full items-center gap-2 px-3 text-left text-xs disabled:text-fg-muted ${
+                          on
+                            ? "bg-surface-2 font-medium"
+                            : filter !== null
+                              ? "text-fg-muted enabled:hover:bg-surface-2 enabled:hover:text-fg"
+                              : "enabled:hover:bg-surface-2"
+                        }`}
+                      >
+                        {entry.swatch && (
+                          <span
+                            aria-hidden="true"
+                            className="size-2 shrink-0 rounded-[2px]"
+                            style={{ background: `var(--cat-${entry.swatch})` }}
+                          />
+                        )}
+                        <span className="flex-1 truncate">{entry.label}</span>
+                        <span className="font-mono text-[11px] tabular-nums text-fg-muted">{entry.count}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
+        <div className="shrink-0 border-t border-border py-1">
+          <button
+            type="button"
+            aria-pressed={showRoutes}
+            onClick={() => setShowRoutes((v) => !v)}
+            className={`flex h-7 w-full items-center gap-2 px-3 text-left text-xs hover:bg-surface-2 ${
+              showRoutes ? "bg-surface-2 font-medium" : ""
+            }`}
+          >
+            <span className="flex-1">{showRoutes ? "Back to the map" : "Routes"}</span>
+            {!showRoutes && (
+              <span className="font-mono text-[11px] tabular-nums text-fg-muted">{result.routes.length}</span>
+            )}
+          </button>
+        </div>
         <div className="shrink-0 border-t border-border p-2">
           <ThemeControl initial={theme} />
         </div>
@@ -173,16 +206,26 @@ export function Workspace({
       <main className="flex min-h-0 flex-col bg-bg">
         <CoverageBanner coverage={result.coverage} />
         <div className="relative min-h-0 flex-1">
-          <MapCanvas
-            base={base}
-            open={open}
-            category={category}
-            selection={selection}
-            onOpen={openFolder}
-            onClose={closeFolder}
-            onSelectFile={toggleFile}
-            onClear={clear}
-          />
+          {showRoutes ? (
+            <RoutesTable
+              routes={result.routes}
+              withheld={result.routesWithheld}
+              frameworks={summary.frameworks}
+              selected={selection?.kind === "file" ? selection.path : null}
+              onGo={goToFile}
+            />
+          ) : (
+            <MapCanvas
+              base={base}
+              open={open}
+              filter={filter}
+              selection={selection}
+              onOpen={openFolder}
+              onClose={closeFolder}
+              onSelectFile={toggleFile}
+              onClear={clear}
+            />
+          )}
         </div>
       </main>
 

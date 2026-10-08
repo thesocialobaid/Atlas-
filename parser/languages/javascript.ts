@@ -3,7 +3,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { Node, Project, SyntaxKind, ts } from "ts-morph";
 import { judgePath, readNode, record, relJoin, verdict } from "../context.ts";
 import type { Context, LanguageHandler, Source } from "../context.ts";
-import type { ImportKind, ImportRecord } from "../types.ts";
+import type { ImportKind, ImportRecord, ModuleExports } from "../types.ts";
 
 const BUILTINS = new Set(builtinModules);
 
@@ -151,8 +151,25 @@ export const javascript: LanguageHandler = {
         const spec = d.getModuleSpecifierValue();
         if (spec !== undefined) seen.push({ spec, kind: "re-export", line: d.getStartLineNumber() });
       }
+      // require() records go after every other kind, so the records (and the
+      // edges built from them) for imports read before require() existed keep
+      // their order exactly. A null spec is a computed one.
+      const required: { spec: string | null; text: string; line: number }[] = [];
       for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-        if (call.getExpression().getKind() !== SyntaxKind.ImportKeyword) continue;
+        const callee = call.getExpression();
+        // A call to anything named `require` loads a module the way Node's does.
+        // Whether this one is Node's isn't decidable from syntax (createRequire
+        // hands back a real one under any name); the bare name is what's read.
+        if (Node.isIdentifier(callee) && callee.getText() === "require") {
+          const args = call.getArguments();
+          if (args.length !== 1) continue;
+          const arg = args[0];
+          const line = call.getStartLineNumber();
+          const literal = Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg);
+          required.push({ spec: literal ? arg.getLiteralValue() : null, text: arg.getText(), line });
+          continue;
+        }
+        if (callee.getKind() !== SyntaxKind.ImportKeyword) continue;
         const arg = call.getArguments()[0];
         const line = call.getStartLineNumber();
         if (arg && (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg))) {
@@ -164,10 +181,27 @@ export const javascript: LanguageHandler = {
           );
         }
       }
+      // TypeScript's `import x = require("y")` compiles to the same call.
+      for (const d of sf.getDescendantsOfKind(SyntaxKind.ImportEqualsDeclaration)) {
+        const ref = d.getModuleReference();
+        if (!Node.isExternalModuleReference(ref)) continue;
+        const expr = ref.getExpression();
+        if (expr && Node.isStringLiteral(expr)) required.push({ spec: expr.getLiteralValue(), text: expr.getText(), line: d.getStartLineNumber() });
+      }
+      required.sort((a, b) => a.line - b.line);
+      ctx.exports.set(file.path, exportsOf(sf.compilerNode));
       project.removeSourceFile(sf);
 
       for (const { spec, kind, line } of seen) {
         out.push(resolve(ctx, file.path, absFile, spec, kind, line, options, cache, workspaces));
+      }
+      for (const { spec, text, line } of required) {
+        out.push(
+          spec === null
+            ? record.excluded(file.path, text, "require", line,
+                "require() with a computed specifier; only literal strings can be read without running the code")
+            : resolve(ctx, file.path, absFile, spec, "require", line, options, cache, workspaces),
+        );
       }
     }
     return out;
@@ -238,4 +272,106 @@ function resolve(
       `subpath of workspace package "${name}"; without an install its exports map can't be followed`);
   }
   return record.external(from, spec, kind, line, `package "${name}" (not installed here, so not followed)`);
+}
+
+const isModuleExports = (n: ts.Expression): boolean =>
+  ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "module" && n.name.text === "exports";
+
+/** `exports` or `module.exports`: the object a CommonJS module's names hang off. */
+const isExportsObject = (n: ts.Expression): boolean => (ts.isIdentifier(n) && n.text === "exports") || isModuleExports(n);
+
+function hasModifier(n: ts.Node, kind: ts.SyntaxKind): boolean {
+  return ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === kind);
+}
+
+function bindingNames(name: ts.BindingName, out: string[]) {
+  if (ts.isIdentifier(name)) out.push(name.text);
+  else for (const el of name.elements) if (!ts.isOmittedExpression(el)) bindingNames(el.name, out);
+}
+
+/**
+ * The names a module exports, read from syntax: ESM export declarations, and
+ * the CommonJS forms Node itself reads statically (`exports.a =`,
+ * `module.exports.a =`, `Object.defineProperty(exports, "a", …)`, the keys of
+ * `module.exports = { … }`). Replacing module.exports with any other value, or
+ * `export default` / `export =`, is "default". A name that can't be spelled
+ * from this file alone — `export *`, a spread, a computed key — makes the
+ * whole list unreadable rather than short.
+ */
+function exportsOf(sf: ts.SourceFile): Omit<ModuleExports, "file"> {
+  const names: string[] = [];
+  let unreadable: string | null = null;
+  const fail = (reason: string) => {
+    unreadable ??= reason;
+  };
+
+  for (const s of sf.statements) {
+    if (ts.isExportAssignment(s)) names.push("default");
+    else if (ts.isExportDeclaration(s)) {
+      if (!s.exportClause) fail("re-exports every name of another module (export * from …)");
+      else if (ts.isNamespaceExport(s.exportClause)) names.push(s.exportClause.name.text);
+      else for (const el of s.exportClause.elements) names.push(el.name.text);
+    } else if (hasModifier(s, ts.SyntaxKind.ExportKeyword)) {
+      if (hasModifier(s, ts.SyntaxKind.DefaultKeyword)) names.push("default");
+      else if (ts.isVariableStatement(s)) for (const d of s.declarationList.declarations) bindingNames(d.name, names);
+      else if (
+        (ts.isFunctionDeclaration(s) || ts.isClassDeclaration(s) || ts.isInterfaceDeclaration(s) || ts.isTypeAliasDeclaration(s) ||
+          ts.isEnumDeclaration(s) || ts.isModuleDeclaration(s) || ts.isImportEqualsDeclaration(s)) &&
+        s.name
+      ) {
+        names.push(s.name.text);
+      }
+    }
+  }
+
+  /** A property name as written, or null if it's computed. */
+  const keyOf = (n: ts.Expression | ts.PropertyName): string | null =>
+    ts.isIdentifier(n) || ts.isStringLiteralLike(n) || ts.isNumericLiteral(n) || ts.isPrivateIdentifier(n) ? n.text : null;
+
+  const visit = (n: ts.Node) => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const left = n.left;
+      if (isModuleExports(left)) {
+        const right = n.right;
+        if (!ts.isObjectLiteralExpression(right)) names.push("default");
+        else {
+          for (const p of right.properties) {
+            if (ts.isSpreadAssignment(p)) {
+              fail("module.exports spreads another object; its keys aren't written in this file");
+              continue;
+            }
+            const key = p.name ? keyOf(p.name) : null;
+            if (key === null) fail("module.exports has a computed key");
+            else names.push(key);
+          }
+        }
+      } else if (ts.isPropertyAccessExpression(left) && isExportsObject(left.expression)) {
+        names.push(left.name.text);
+      } else if (ts.isElementAccessExpression(left) && isExportsObject(left.expression)) {
+        const key = keyOf(left.argumentExpression);
+        if (key === null) fail("assigns to exports under a computed name");
+        else names.push(key);
+      }
+    }
+    if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      const target = n.arguments[0];
+      const onObject = (name: string) =>
+        ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Object" && callee.name.text === name;
+      if (onObject("defineProperty") && target && isExportsObject(target)) {
+        const key = n.arguments[1] ? keyOf(n.arguments[1]) : null;
+        if (key === null) fail("defines an export under a computed name");
+        else names.push(key);
+      } else if (onObject("assign") && target && isExportsObject(target)) {
+        fail("copies another object's keys onto module.exports (Object.assign)");
+      } else if (ts.isIdentifier(callee) && ["__exportStar", "__export"].includes(callee.text) && n.arguments.some(isExportsObject)) {
+        // What TypeScript emits for `export * from` in CommonJS output.
+        fail("re-exports every name of another module (__exportStar)");
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+
+  return unreadable === null ? { names: [...new Set(names)], reason: null } : { names: null, reason: unreadable };
 }

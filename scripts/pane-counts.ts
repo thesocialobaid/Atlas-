@@ -18,7 +18,7 @@ if (!dir) {
 const result = await parseRepository(dir);
 
 const s = summarise(result);
-console.log(`framework ${s.framework ?? "none"}, files ${s.files}, imports ${s.imports}, unidentified ${s.unidentified}`);
+console.log(`frameworks ${s.frameworks.join(", ") || "none"}, files ${s.files}, imports ${s.imports}, unidentified ${s.unidentified}`);
 console.log(`leaned on ${s.leanedOn.length}: ${s.leanedOn.slice(0, 3).map((r) => `${r.path} (${r.count})`).join(", ")}`);
 console.log(`nothing imports ${s.entryPoints.length}: ${s.entryPoints.slice(0, 3).map((r) => `${r.path} (${r.count})`).join(", ")}`);
 

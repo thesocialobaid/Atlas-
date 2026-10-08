@@ -62,6 +62,14 @@ function grammarDir(): string {
   return grammars;
 }
 
+/**
+ * Where the engine and a grammar are on disk, for a separate Node process
+ * that has to load them itself (see isolated.ts).
+ */
+export function enginePaths(grammar: string): { engine: string; grammar: string } {
+  return { engine: requireFromHere().resolve("web-tree-sitter"), grammar: join(grammarDir(), `tree-sitter-${grammar}.wasm`) };
+}
+
 export async function parserFor(grammar: string): Promise<Parser> {
   const { Engine, ready, languages } = engineState();
   await ready;

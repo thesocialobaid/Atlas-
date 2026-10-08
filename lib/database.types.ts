@@ -19,6 +19,7 @@ export type Database = {
       analyses: {
         Row: {
           adapter: string | null
+          adapters: string[] | null
           commit_sha: string | null
           coverage: Json | null
           created_at: string
@@ -30,12 +31,14 @@ export type Database = {
           parser_version: number | null
           progressed_at: string | null
           project_id: string
+          routes_withheld: Json | null
           stage: string | null
           stage_message: string | null
           status: string
         }
         Insert: {
           adapter?: string | null
+          adapters?: string[] | null
           commit_sha?: string | null
           coverage?: Json | null
           created_at?: string
@@ -47,12 +50,14 @@ export type Database = {
           parser_version?: number | null
           progressed_at?: string | null
           project_id: string
+          routes_withheld?: Json | null
           stage?: string | null
           stage_message?: string | null
           status?: string
         }
         Update: {
           adapter?: string | null
+          adapters?: string[] | null
           commit_sha?: string | null
           coverage?: Json | null
           created_at?: string
@@ -64,6 +69,7 @@ export type Database = {
           parser_version?: number | null
           progressed_at?: string | null
           project_id?: string
+          routes_withheld?: Json | null
           stage?: string | null
           stage_message?: string | null
           status?: string
@@ -183,6 +189,7 @@ export type Database = {
       file_roles: {
         Row: {
           file_id: string
+          framework: string
           id: string
           org_id: string
           role: string
@@ -190,6 +197,7 @@ export type Database = {
         }
         Insert: {
           file_id: string
+          framework: string
           id?: string
           org_id: string
           role: string
@@ -197,6 +205,7 @@ export type Database = {
         }
         Update: {
           file_id?: string
+          framework?: string
           id?: string
           org_id?: string
           role?: string
@@ -429,21 +438,27 @@ export type Database = {
       routes: {
         Row: {
           file_id: string
+          framework: string
           id: string
+          line: number
           method: string
           org_id: string
           path: string
         }
         Insert: {
           file_id: string
+          framework: string
           id?: string
+          line: number
           method: string
           org_id: string
           path: string
         }
         Update: {
           file_id?: string
+          framework?: string
           id?: string
+          line?: number
           method?: string
           org_id?: string
           path?: string

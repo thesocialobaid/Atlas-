@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { Category } from "@/lib/map/categories";
 import type { Fold } from "@/lib/map/fold";
 import { layout } from "@/lib/map/layout";
+import type { RailEntry } from "@/lib/map/rail";
 import { buildView, litFiles, relations, type FileEdge, type Relation } from "@/lib/map/view";
 import { Folded, Panel, type FoldedNode, type PanelNode } from "./nodes";
 import type { Selection } from "./state";
@@ -17,13 +18,15 @@ export type Base = {
   edges: FileEdge[];
   fanIn: Map<string, number>;
   categories: Map<string, Category>;
+  /** Which rail entry each file is counted under. */
+  entryOf: Map<string, string>;
 };
 
 type Props = {
   base: Base;
   open: ReadonlySet<string>;
-  /** The rail's filter. Files of other kinds dim; nothing is removed. */
-  category: Category | null;
+  /** The rail's filter. Files under other entries dim; nothing is removed. */
+  filter: RailEntry | null;
   selection: Selection;
   onOpen: (dir: string) => void;
   onClose: (dir: string) => void;
@@ -40,7 +43,7 @@ export function MapCanvas(props: Props) {
   );
 }
 
-function Canvas({ base, open, category, selection, onOpen, onClose, onSelectFile, onClear }: Props) {
+function Canvas({ base, open, filter, selection, onOpen, onClose, onSelectFile, onClear }: Props) {
   const { fitView, getZoom } = useReactFlow();
 
   const pinned = selection?.kind === "file" ? selection.path : null;
@@ -83,7 +86,8 @@ function Canvas({ base, open, category, selection, onOpen, onClose, onSelectFile
               selectedGroup: selection?.kind === "group" && selection.dir === g.dir,
               relations: related,
               categories: base.categories,
-              category,
+              entryOf: base.entryOf,
+              filter,
               onClose,
               onSelect: onSelectFile,
             },
@@ -99,12 +103,12 @@ function Canvas({ base, open, category, selection, onOpen, onClose, onSelectFile
               group: g,
               dim:
                 (lit !== null && !g.files.some((p) => lit.has(p))) ||
-                (category !== null && !g.files.some((p) => base.categories.get(p) === category)),
+                (filter !== null && !g.files.some((p) => base.entryOf.get(p) === filter.key)),
               onOpen,
             },
           },
     );
-  }, [placed, lit, selection, related, base, category, onOpen, onClose, onSelectFile]);
+  }, [placed, lit, selection, related, base, filter, onOpen, onClose, onSelectFile]);
 
   const edges = useMemo<Edge[]>(
     () =>
@@ -115,13 +119,13 @@ function Canvas({ base, open, category, selection, onOpen, onClose, onSelectFile
         const out = selected !== null && e.pairs.some((p) => selected.has(p.from));
         const stroke = into ? "var(--incoming)" : out ? "var(--outgoing)" : "var(--fg-muted)";
         // Under the rail's filter a line stays only if one of its ends is of
-        // that kind, the same rule the boxes and rows follow. A selection's own
+        // that entry, the same rule the boxes and rows follow. A selection's own
         // lines always stay: they're what the pane is describing.
         const filteredOut =
-          category !== null &&
+          filter !== null &&
           !into &&
           !out &&
-          !e.pairs.some((p) => base.categories.get(p.from) === category || base.categories.get(p.to) === category);
+          !e.pairs.some((p) => base.entryOf.get(p.from) === filter.key || base.entryOf.get(p.to) === filter.key);
         const opacity = filteredOut ? 0.08 : selected === null ? 0.45 : into || out ? 0.9 : 0.08;
         return {
           id: e.id,
@@ -141,7 +145,7 @@ function Canvas({ base, open, category, selection, onOpen, onClose, onSelectFile
           focusable: false,
         };
       }),
-    [view, selected, category, base],
+    [view, selected, filter, base],
   );
 
   // Folders open from the map and from the pane, so the refit watches what

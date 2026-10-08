@@ -6,4 +6,7 @@
 
 import type { ParseResult } from "../../parser/types.ts";
 
-export type MapInput = Pick<ParseResult, "files" | "edges" | "imports" | "fan" | "coverage" | "adapter">;
+export type MapInput = Pick<ParseResult, "files" | "edges" | "imports" | "fan" | "coverage" | "adapters" | "routes"> & {
+  /** Null for an analysis stored before routes were read. */
+  routesWithheld: ParseResult["routesWithheld"] | null;
+};

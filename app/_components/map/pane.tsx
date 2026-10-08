@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { CATEGORY_LABEL, type Category } from "@/lib/map/categories";
 import type { FileDetail, FolderDetail, Ranked, Summary } from "@/lib/map/detail";
 import { INSIGHT_TEXT, LONG_LINES, REACH_DEPTH, type Direction, type Insights, type Reached } from "@/lib/map/graph";
+import { frameworkName } from "@/parser/adapters/taxonomy";
 import { useHover } from "./state";
 
 export type Tab = "structure" | "explanation";
@@ -141,7 +142,9 @@ function Overview({ name, summary, insights, insightsOpen, onInsightsOpen, categ
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <dl className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5 px-3 py-3 text-xs">
-          <Fact label="Framework">{summary.framework ?? <span className="text-fg-muted">None detected</span>}</Fact>
+          <Fact label={summary.frameworks.length > 1 ? "Frameworks" : "Framework"}>
+            {summary.frameworks.length > 0 ? summary.frameworks.join(", ") : <span className="text-fg-muted">None detected</span>}
+          </Fact>
           <Fact label="Files">
             <Num>{summary.files}</Num>
           </Fact>
@@ -160,10 +163,20 @@ function Overview({ name, summary, insights, insightsOpen, onInsightsOpen, categ
           <Fact label="Routes">
             {/* Routes come only from a framework adapter. Without one there's
                 nothing to count, and zero would claim there are none. */}
-            {summary.framework === null ? (
+            {summary.frameworks.length === 0 ? (
               <span className="text-fg-muted">Not recovered without a framework</span>
+            ) : summary.routesWithheld === null ? (
+              <span className="text-fg-muted">Not read: analysed before routes were</span>
             ) : (
-              <span className="text-fg-muted">None recovered</span>
+              <>
+                <Num>{summary.routes}</Num>
+                {summary.routesWithheld > 0 && (
+                  <span className="text-fg-muted">
+                    {" "}
+                    · <Num>{summary.routesWithheld}</Num> not listed
+                  </span>
+                )}
+              </>
             )}
           </Fact>
           <Fact label="Unidentified">
@@ -189,7 +202,7 @@ function Overview({ name, summary, insights, insightsOpen, onInsightsOpen, categ
         />
         <InsightsPanel
           insights={insights}
-          framework={summary.framework}
+          framework={summary.frameworks[0] ?? null}
           open={insightsOpen}
           onOpen={onInsightsOpen}
           categories={categories}
@@ -291,7 +304,12 @@ function FileStructure({
           <Fact label="Kind">
             {CATEGORY_LABEL[detail.category]} <span className="font-mono text-[11px] text-fg-muted">{file.language}</span>
           </Fact>
-          {file.role && <Fact label="Role">{file.role}</Fact>}
+          {file.role && (
+            <Fact label="Role">
+              {file.role}
+              {file.framework && <span className="text-fg-muted"> · {frameworkName(file.framework) ?? file.framework}</span>}
+            </Fact>
+          )}
           <Fact label="Length">
             {file.lines === null ? (
               <span className="text-fg-muted">Binary</span>

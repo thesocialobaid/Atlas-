@@ -1,5 +1,6 @@
 import { fanCounts } from "../parser/graph.ts";
-import { parseCoverage, parseEdge, parseImportRecord, parseRepoFile } from "../parser/read.ts";
+import { parseCoverage, parseEdge, parseImportRecord, parseRepoFile, parseRoute, parseWithheld } from "../parser/read.ts";
+import type { Route } from "../parser/types.ts";
 import type { MapInput } from "./map/input.ts";
 import { createSupabase } from "./supabase";
 
@@ -108,7 +109,7 @@ export async function getAnalysis(id: string) {
   const { data, error } = await createSupabase()
     .from("analyses")
     .select(
-      "id, status, stage, stage_message, error, commit_sha, created_at, progressed_at, finished_at, coverage, adapter, links_skipped, project:projects(repo_owner, repo_name)",
+      "id, status, stage, stage_message, error, commit_sha, created_at, progressed_at, finished_at, coverage, adapter, adapters, routes_withheld, links_skipped, project:projects(repo_owner, repo_name)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -154,14 +155,22 @@ export async function getAnalysisMap(id: string) {
   const fileRows = await everyRow("files", (from, to) =>
     db
       .from("files")
-      .select("id, path, folder, language, lines, bytes, sha256, module, status, skip_reason, had_syntax_errors, file_roles(role)")
+      .select(
+        "id, path, folder, language, lines, bytes, sha256, module, status, skip_reason, had_syntax_errors, file_roles(role, framework), routes(framework, method, path, line)",
+      )
       .eq("analysis_id", id)
       .order("path")
       .range(from, to),
   );
   const pathOf = new Map<string, string>();
+  const routes: Route[] = [];
   const files = fileRows.map((f, i) => {
     pathOf.set(f.id, f.path);
+    f.routes.forEach((r, j) =>
+      routes.push(
+        parseRoute({ framework: r.framework, file: f.path, method: r.method, path: r.path, line: r.line }, `files[${i}].routes[${j}]`),
+      ),
+    );
     return parseRepoFile(
       {
         path: f.path,
@@ -176,6 +185,7 @@ export async function getAnalysisMap(id: string) {
         hadSyntaxErrors: f.had_syntax_errors,
         // unique (file_id) on file_roles: at most one.
         role: f.file_roles[0]?.role ?? null,
+        framework: f.file_roles[0]?.framework ?? null,
       },
       `files[${i}]`,
     );
@@ -213,7 +223,23 @@ export async function getAnalysisMap(id: string) {
       edges,
     ),
     coverage: parseCoverage(analysis.coverage),
-    adapter: analysis.adapter ?? fail("the analysis", "it finished without recording an adapter"),
+    // Stored before several frameworks could apply: one adapter name, "none" for no framework.
+    adapters:
+      analysis.adapters ??
+      (analysis.adapter === null
+        ? fail("the analysis", "it finished without recording its frameworks")
+        : analysis.adapter === "none"
+          ? []
+          : [analysis.adapter]),
+    routes,
+    // Null when the analysis was stored before routes were read: the map
+    // says so rather than showing an empty table as if there were none.
+    routesWithheld:
+      analysis.routes_withheld === null
+        ? null
+        : Array.isArray(analysis.routes_withheld)
+          ? analysis.routes_withheld.map((g, i) => parseWithheld(g, `routes_withheld[${i}]`))
+          : fail("the analysis", "its withheld routes aren't a list"),
   };
   return { analysis, input };
 }
