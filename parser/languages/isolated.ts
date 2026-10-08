@@ -131,6 +131,11 @@ export async function parseIsolated(
         resolve({ error: `the ${grammar} parser process returned something unreadable: ${e instanceof Error ? e.message : String(e)}` });
       }
     });
+    // A child that dies before reading its input (a grammar that fails to
+    // load, a spawn that fails) breaks this pipe. The close or error handler
+    // above already reports the real failure; unhandled, the broken pipe
+    // would throw in this process instead.
+    child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify(files));
   });
 }

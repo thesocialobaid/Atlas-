@@ -45,13 +45,13 @@ function projectDirs(ctx: Context): string[] {
  * packaging documents). Its module name comes from the innermost root that
  * holds it, so src/ is tried before its project there.
  */
-function rootsFor(ctx: Context, projects: string[], path: string): { search: string[]; naming: string[] } {
+function rootsFor(projects: string[], srcDirs: ReadonlySet<string>, path: string): { search: string[]; naming: string[] } {
   const search: string[] = [];
   const naming: string[] = [];
   for (const d of projects) {
     if (d !== "" && !path.startsWith(`${d}/`)) continue;
     const src = d ? `${d}/src` : "src";
-    const hasSrc = isDirWithPython(ctx, src);
+    const hasSrc = srcDirs.has(src);
     search.push(d, ...(hasSrc ? [src] : []));
     naming.push(...(hasSrc ? [src] : []), d);
   }
@@ -106,10 +106,13 @@ export const python: LanguageHandler = {
   async analyze(sources: Source[], ctx: Context): Promise<ImportRecord[]> {
     const parser = await parserFor("python");
     const projects = projectDirs(ctx);
+    // Whether a project has a src/ layout depends only on the project, and
+    // finding out scans every path, so it's decided once per project.
+    const srcDirs = new Set(projects.map((d) => (d ? `${d}/src` : "src")).filter((src) => isDirWithPython(ctx, src)));
     const out: ImportRecord[] = [];
 
     for (const { file, text } of sources) {
-      const { search: roots, naming } = rootsFor(ctx, projects, file.path);
+      const { search: roots, naming } = rootsFor(projects, srcDirs, file.path);
       file.module = moduleName(file.path, naming);
       const tree = parser.parse(text);
       file.hadSyntaxErrors = tree.rootNode.hasError;

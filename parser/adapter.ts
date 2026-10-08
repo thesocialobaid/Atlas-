@@ -69,7 +69,10 @@ export async function applyAdapters(adapters: readonly Adapter[], input: Adapter
         if (!best || depth > best.depth) best = { adapter, depth };
       }
     }
-    if (best) owned.set(best.adapter, [...(owned.get(best.adapter) ?? []), f]);
+    if (!best) continue;
+    const list = owned.get(best.adapter);
+    if (list) list.push(f);
+    else owned.set(best.adapter, [f]);
   }
 
   const out: Framework = { adapters: [], roles: new Map(), routes: [], routesWithheld: [] };
