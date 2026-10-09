@@ -1,9 +1,10 @@
-// node --env-file=.env scripts/analyze.ts <github url> --org <org_id>
+// node scripts/analyze.ts <github url> --org <org_id>
 //
 // Runs the real pipeline from a terminal, before there's a form to start it
 // from: the same start and run the app will call, against the real database.
 // Prints each stage as it begins and what it found, then the stored counts.
 
+import "../lib/load-env.ts";
 import { createPipelineDb } from "../lib/pipeline/db.ts";
 import { runAnalysis, startAnalysis } from "../lib/pipeline/run.ts";
 
@@ -11,7 +12,7 @@ async function main(argv: string[]) {
   const url = argv[0];
   const orgIndex = argv.indexOf("--org");
   const orgId = orgIndex === -1 ? undefined : argv[orgIndex + 1];
-  if (!url || !orgId) throw new Error("usage: node --env-file=.env scripts/analyze.ts <github url> --org <org_id>");
+  if (!url || !orgId) throw new Error("usage: node scripts/analyze.ts <github url> --org <org_id>");
 
   const db = createPipelineDb();
   const started = Date.now();
