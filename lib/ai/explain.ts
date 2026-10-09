@@ -1,13 +1,15 @@
 // Explaining a file and explaining a folded folder. The model is handed
 // everything it may mention and asked to explain it; it never decides what's
 // connected. Every neighbour comes from the parser's resolved edges, and
-// every path in its answer that isn't one of them is the model's invention,
-// which is what the next phase measures.
+// every path in its answer that isn't one of them is the model's invention:
+// each fresh answer is checked for those and the score recorded on its trace.
 //
 // Plain server code: no Next, no React, runnable from a script.
 
 import { readCache, writeCache, cacheKey, type Db } from "./cache.ts";
-import { chat, MODEL, traced } from "./client.ts";
+import { getCurrentRunTree } from "langsmith/traceable";
+import { chat, langsmith, MODEL, traced, tracingStatus } from "./client.ts";
+import { checkPaths, INVENTED_PATHS_KEY } from "./invented.ts";
 
 /**
  * Bumped whenever a prompt changes, so answers written under the old one
@@ -34,7 +36,7 @@ const SHARED_RULES = `- When you mention a file, write its full path exactly as 
 - Explain; don't evaluate. No ratings, no problems found, no suggested improvements.
 - ${FORMAT}`;
 
-const FILE_SYSTEM = `You explain one file of a code repository to a developer reading a map of its dependencies.
+export const FILE_SYSTEM = `You explain one file of a code repository to a developer reading a map of its dependencies.
 
 You're given the file's path and source, and two lists a parser produced: the repository files it imports, and the repository files that import it. Those lists are complete and exact.
 
@@ -62,6 +64,20 @@ export type FileToExplain = {
   importedBy: string[];
 };
 
+/** The paths `listed` shows: everything up to the cap. */
+const shownOf = (paths: string[]) => paths.slice(0, MAX_LISTED);
+
+/** Every path a file's explanation was shown: its own and its listed neighbours. */
+export function shownInFile(f: FileToExplain): string[] {
+  return [f.path, ...shownOf(f.imports), ...shownOf(f.importedBy)];
+}
+
+/** Every path a folder's explanation was shown: its listed files and both ends of each listed import. */
+export function shownInFolder(f: Pick<FolderToExplain, "incoming" | "outgoing"> & { files: { path: string }[] }): string[] {
+  const ends = (list: { from: string; to: string }[]) => list.slice(0, MAX_LISTED).flatMap((e) => [e.from, e.to]);
+  return [...shownOf(f.files.map((x) => x.path)), ...ends(f.incoming), ...ends(f.outgoing)];
+}
+
 function listed(paths: string[]): string {
   if (paths.length === 0) return "(none)";
   const shown = paths.slice(0, MAX_LISTED).map((p) => `- ${p}`);
@@ -77,7 +93,18 @@ function excerpt(text: string): string {
   return whole ? text : `${cut}\n[source cut here: the file has ${lines.length} lines, only the start is shown]`;
 }
 
-async function ask(system: string, user: string): Promise<string> {
+/** What the model is told about a file, under whichever system prompt asks. */
+export function fileMessage(f: FileToExplain, source: string): string {
+  return [
+    `File: ${f.path}`,
+    `Language: ${f.language}${f.role ? `\nRole: ${f.role}` : ""}`,
+    `Repository files it imports:\n${listed(f.imports)}`,
+    `Repository files that import it:\n${listed(f.importedBy)}`,
+    `Source:\n${excerpt(source)}`,
+  ].join("\n\n");
+}
+
+export async function ask(system: string, user: string): Promise<string> {
   const res = await chat().chat.completions.create({
     model: MODEL,
     temperature: 0.2,
@@ -89,6 +116,24 @@ async function ask(system: string, user: string): Promise<string> {
   const body = res.choices[0]?.message.content?.trim();
   if (!body) throw new Error("The model returned an empty answer.");
   return body;
+}
+
+/**
+ * Records the invented-path check on the run that just wrote `body`. Only a
+ * fresh answer is scored: a cache hit is the same answer again, and scoring it
+ * twice would count it twice. Sent without waiting, so the reader doesn't wait
+ * on LangSmith; a failure is logged, never swallowed.
+ */
+function scorePaths(runId: string | undefined, body: string, shown: string[]): void {
+  if (!runId || !tracingStatus().on) return;
+  const { mentioned, invented } = checkPaths(body, shown);
+  const comment =
+    invented.length > 0
+      ? `Not shown to the model: ${invented.join(", ")}`
+      : `${mentioned.length} ${mentioned.length === 1 ? "path" : "paths"} mentioned, all shown`;
+  langsmith()
+    .createFeedback(runId, INVENTED_PATHS_KEY, { score: invented.length === 0 ? 1 : 0, comment })
+    .catch((e: unknown) => console.error("Couldn't record the invented-path check:", e));
 }
 
 /**
@@ -109,15 +154,9 @@ export async function explainFile(
     if (hit !== undefined) return { body: hit, cached: true };
 
     const source = await traced("read source", async (path: string) => ({ text: await readSource(path) }), "tool")(f.path);
-    const user = [
-      `File: ${f.path}`,
-      `Language: ${f.language}${f.role ? `\nRole: ${f.role}` : ""}`,
-      `Repository files it imports:\n${listed(f.imports)}`,
-      `Repository files that import it:\n${listed(f.importedBy)}`,
-      `Source:\n${excerpt(source.text)}`,
-    ].join("\n\n");
-    const body = await ask(FILE_SYSTEM, user);
+    const body = await ask(FILE_SYSTEM, fileMessage(f, source.text));
     await writeCache(db, orgId, "file", [{ key, body }]);
+    scorePaths(getCurrentRunTree(true)?.id, body, shownInFile(f));
     return { body, cached: false };
   });
   return run(file);
@@ -149,6 +188,7 @@ export async function explainFolder(db: Db, orgId: string, folder: FolderToExpla
     ].join("\n\n");
     const body = await ask(FOLDER_SYSTEM, user);
     await writeCache(db, orgId, "folder", [{ key, body }]);
+    scorePaths(getCurrentRunTree(true)?.id, body, shownInFolder(f));
     return { body, cached: false };
   });
   return run(folder);

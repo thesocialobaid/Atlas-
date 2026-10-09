@@ -68,6 +68,25 @@ function parseLabels(text: string): Map<string, string> {
 }
 
 /**
+ * One question to the model: a role per file, exactly as answered, keyed by
+ * the path it answered for. Not every answer is an allowed role; callers
+ * decide what one outside the list means. The role eval asks through this
+ * too, so it measures the prompt the pipeline sends.
+ */
+export async function askRoles(files: { path: string; head: string }[]): Promise<Map<string, string>> {
+  const res = await chat().chat.completions.create({
+    model: MODEL,
+    temperature: 0,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: files.map((f) => `=== ${f.path}\n${f.head}`).join("\n\n") },
+    ],
+  });
+  return parseLabels(res.choices[0]?.message.content ?? "");
+}
+
+/**
  * Labels files in batches, reading the cache first. Partial results are kept
  * when a batch fails: every label returned is a valid one, and the rest are
  * counted with the reason.
@@ -98,16 +117,7 @@ export async function labelFiles(db: Db, orgId: string, files: ToLabel[]): Promi
       const batch = misses.slice(i, i + BATCH);
       let answers: Map<string, string>;
       try {
-        const res = await chat().chat.completions.create({
-          model: MODEL,
-          temperature: 0,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: SYSTEM },
-            { role: "user", content: batch.map((f) => `=== ${f.path}\n${f.head}`).join("\n\n") },
-          ],
-        });
-        answers = parseLabels(res.choices[0]?.message.content ?? "");
+        answers = await askRoles(batch);
       } catch (e) {
         result.failed = { count: misses.length - i, reason: e instanceof Error ? e.message : String(e) };
         break;

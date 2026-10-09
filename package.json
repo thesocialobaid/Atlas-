@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "eval:paths": "node evals/invented-paths.ts",
+    "eval:roles": "node evals/roles.ts",
+    "eval:prompts": "node evals/compare-prompts.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.10",

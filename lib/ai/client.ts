@@ -40,6 +40,11 @@ export function tracingStatus(): { on: true } | { on: false; reason: string } {
 // to exist; with tracing off it sends nothing.
 const traces = new Client();
 
+/** The LangSmith client every trace goes through. Feedback on a run and the evals' datasets use it too. */
+export function langsmith(): Client {
+  return traces;
+}
+
 let wrapped: OpenAI | null = null;
 
 /** The wrapped client. Throws AiUnavailable when there's no key. */
