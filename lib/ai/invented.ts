@@ -41,18 +41,21 @@ function trimmed(token: string): string {
 
 /**
  * Path-shaped tokens, in order of first appearance. A token with a folder in
- * it counts wherever it's written. A bare filename counts only inside inline
- * code: in prose, "Next.js" and "Node.js" are names, not files.
+ * it, or written as inline code, counts wherever it's written. A bare
+ * filename in prose counts unless it's capitalised: models write root files
+ * like app.js in plain text, while "Next.js" and "Node.js" are names, not
+ * files. A capitalised root file in prose (App.js) is missed, and a
+ * lowercase name in prose ("node.js") is flagged; the first only misses an
+ * invention, the second is plain to see on the trace.
  *
- * Known gap: a bare filename in plain prose, and a path written without its
- * extension, aren't checked. Both miss inventions rather than invent misses.
+ * Known gap: a path written without its extension isn't checked.
  */
 export function pathTokens(text: string): string[] {
   const found = new Set<string>();
-  const take = (chunk: string, bareToo: boolean) => {
+  const take = (chunk: string, inCode: boolean) => {
     for (const m of chunk.matchAll(TOKEN)) {
       const t = trimmed(m[1]);
-      if (bareToo || t.includes("/")) found.add(t);
+      if (inCode || t.includes("/") || !/^[A-Z]/.test(t)) found.add(t);
     }
   };
   take(text.replace(CODE_SPAN, " "), false);
