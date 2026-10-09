@@ -15,7 +15,7 @@ import { evaluate } from "langsmith/evaluation";
 import { flushTraces, langsmith, MODEL } from "../lib/ai/client.ts";
 import { askRoles, LABEL_HEAD_LINES } from "../lib/ai/label.ts";
 import { LABEL, LABEL_FRAMEWORK } from "../parser/adapters/taxonomy.ts";
-import { createPipelineDb, filesOf, firstLine, latestAnalyses, paced, requireTracing, textAt } from "./data.ts";
+import { createFilledDataset, createPipelineDb, filesOf, firstLine, latestAnalyses, paced, requireTracing, textAt } from "./data.ts";
 
 const DATASET = "atlas: conventional roles";
 
@@ -65,11 +65,11 @@ async function build(): Promise<void> {
   if (examples.length < MIN_EXAMPLES) {
     throw new Error(`Only ${examples.length} files have a conventional role the labeller may give; at least ${MIN_EXAMPLES} are needed. Analyse more repositories.`);
   }
-  const client = langsmith();
-  const dataset = await client.createDataset(DATASET, {
-    description: "Files whose role a convention assigned, limited to roles the labeller is allowed to answer. Inputs are what the labeller sees; the output is the conventional role.",
-  });
-  await client.createExamples(examples.map((e) => ({ ...e, dataset_id: dataset.id })));
+  await createFilledDataset(
+    DATASET,
+    "Files whose role a convention assigned, limited to roles the labeller is allowed to answer. Inputs are what the labeller sees; the output is the conventional role.",
+    examples,
+  );
   console.log(`dataset "${DATASET}": ${examples.length} files${skipped.length ? `, ${skipped.length} left out` : ""}`);
 }
 

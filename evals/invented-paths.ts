@@ -80,8 +80,10 @@ async function recent(days: number): Promise<{ explanations: Explanation[]; runs
     }
     const shown = file ? shownInFile(file) : shownInFolder(folder!);
     const subject = file ? file.path : `${folder!.dir}/`;
-    // A cache hit is the same answer to the same question: scored once.
-    const key = JSON.stringify([subject, body]);
+    // A cache hit is the same answer to the same question: scored once. The
+    // shown paths are part of the question, so the same answer checked
+    // against different paths is scored separately.
+    const key = JSON.stringify([subject, body, [...shown].sort()]);
     if (seen.has(key)) continue;
     seen.add(key);
     explanations.push({ runId: run.id, subject, body, shown });

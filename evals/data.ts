@@ -9,12 +9,29 @@
 
 import { createPipelineDb, type PipelineDb } from "../lib/pipeline/db.ts";
 import { readFileAt, type RepoRef } from "../lib/pipeline/github.ts";
-import { tracingStatus } from "../lib/ai/client.ts";
+import type { ExampleCreate } from "langsmith/schemas";
+import { langsmith, tracingStatus } from "../lib/ai/client.ts";
 
 /** Evals write experiments to LangSmith; without tracing there's nowhere to put them. */
 export function requireTracing(): void {
   const t = tracingStatus();
   if (!t.on) throw new Error(`Evals need LangSmith, and tracing is off: ${t.reason}.`);
+}
+
+/**
+ * Creates a dataset with all its examples, or none. A dataset left behind
+ * half-filled would be found on the next run and scored as if complete, so
+ * a failed upload removes it before the error is passed on.
+ */
+export async function createFilledDataset(name: string, description: string, examples: Omit<ExampleCreate, "dataset_id">[]): Promise<void> {
+  const client = langsmith();
+  const dataset = await client.createDataset(name, { description });
+  try {
+    await client.createExamples(examples.map((e) => ({ ...e, dataset_id: dataset.id })));
+  } catch (e) {
+    await client.deleteDataset({ datasetId: dataset.id });
+    throw e;
+  }
 }
 
 export type Analysis = { id: string; repo: RepoRef; commit: string };

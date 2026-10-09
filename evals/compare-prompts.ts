@@ -23,7 +23,7 @@ import { ask, FILE_SYSTEM, fileMessage, shownInFile, type FileToExplain } from "
 import { checkPaths, INVENTED_PATHS_KEY } from "../lib/ai/invented.ts";
 import { categoryOf } from "../lib/map/categories.ts";
 import { REWRITTEN_FILE_SYSTEM } from "./explain-prompt.ts";
-import { createPipelineDb, edgesOf, filesOf, firstLine, latestAnalyses, paced, requireTracing, strings, textAt } from "./data.ts";
+import { createFilledDataset, createPipelineDb, edgesOf, filesOf, firstLine, latestAnalyses, paced, requireTracing, strings, textAt } from "./data.ts";
 
 const DATASET = "atlas: explanations";
 const PER_REPO = 2;
@@ -79,11 +79,11 @@ async function build(): Promise<void> {
   }
   for (const s of skipped) console.log(`left out  ${s}`);
   if (examples.length === 0) throw new Error("No analysed file has a connection to explain. Analyse a repository first.");
-  const client = langsmith();
-  const dataset = await client.createDataset(DATASET, {
-    description: "Files from the stored analyses with their neighbours, as the app hands them to the explanation prompt, and their source at the analysed commit.",
-  });
-  await client.createExamples(examples.map((e) => ({ ...e, dataset_id: dataset.id })));
+  await createFilledDataset(
+    DATASET,
+    "Files from the stored analyses with their neighbours, as the app hands them to the explanation prompt, and their source at the analysed commit.",
+    examples,
+  );
   console.log(`dataset "${DATASET}": ${examples.length} files${skipped.length ? `, ${skipped.length} left out` : ""}`);
 }
 
