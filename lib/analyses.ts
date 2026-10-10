@@ -5,7 +5,7 @@ import { categoryOf } from "./map/categories.ts";
 import { fold } from "./map/fold.ts";
 import type { MapInput } from "./map/input.ts";
 import type { FileToExplain, FolderToExplain } from "./ai/explain.ts";
-import { createSupabase } from "./supabase";
+import { createCredentialSupabase, createSupabase, type Db } from "./supabase";
 
 // None of these queries filter by organization: the row policy decides which
 // rows come back. If another organization's row ever appears, the policy is
@@ -106,10 +106,10 @@ export type Dashboard = Awaited<ReturnType<typeof getDashboard>>;
  * One analysis for its progress page. Null when it doesn't exist or belongs to
  * another organization: the policy hides both the same way, and so does this.
  */
-export async function getAnalysis(id: string) {
+export async function getAnalysis(id: string, db: Db = createSupabase()) {
   // Not a uuid can't be a row; asking would only be an error from Postgres.
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
-  const { data, error } = await createSupabase()
+  const { data, error } = await db
     .from("analyses")
     .select(
       "id, project_id, status, stage, stage_message, error, commit_sha, created_at, progressed_at, finished_at, coverage, adapter, adapters, routes_withheld, links_skipped, label_note, project:projects(repo_owner, repo_name)",
@@ -150,10 +150,9 @@ async function everyRow<T>(
  * another organization, or hasn't finished: there's no map until the run
  * has stored one.
  */
-export async function getAnalysisMap(id: string) {
-  const analysis = await getAnalysis(id);
+export async function getAnalysisMap(id: string, db: Db = createSupabase()) {
+  const analysis = await getAnalysis(id, db);
   if (!analysis || analysis.status !== "complete") return null;
-  const db = createSupabase();
 
   const fileRows = await everyRow("files", (from, to) =>
     db
@@ -246,6 +245,32 @@ export async function getAnalysisMap(id: string) {
           : fail("the analysis", "its withheld routes aren't a list"),
   };
   return { analysis, input };
+}
+
+/**
+ * A credential for the agent to read one analysis with, minted by the database
+ * for the signed-in member. Null when the analysis isn't finished or isn't in
+ * the member's active organization: the database decides, the app only asks.
+ */
+export async function mintAgentCredential(analysisId: string): Promise<string | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(analysisId)) return null;
+  const { data, error } = await createSupabase().rpc("mint_agent_credential", { analysis: analysisId });
+  if (error) fail("a credential for the agent", error.message);
+  return data;
+}
+
+/**
+ * The analysis a credential names, as the map reads it. There's no id to ask
+ * for: the policy returns the one analysis the credential's signature covers,
+ * or none when it's forged, expired or names something unfinished. Null then.
+ */
+export async function getCredentialAnalysisMap(credential: string) {
+  const db = createCredentialSupabase(credential);
+  const { data, error } = await db.from("analyses").select("id").limit(2);
+  if (error) fail("the analysis", error.message);
+  if (!data || data.length === 0) return null;
+  if (data.length > 1) fail("the analysis", "a credential reached more than one analysis");
+  return getAnalysisMap(data[0].id, db);
 }
 
 /**

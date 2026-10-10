@@ -13,6 +13,7 @@ import type { Theme } from "@/lib/theme";
 import type { MapInput } from "@/lib/map/input";
 import { Logo } from "../icons";
 import { ThemeControl } from "../../theme-control";
+import { AskPane, AskToggle, useConversation } from "./ask-pane";
 import { MapCanvas, type Base } from "./canvas";
 import { CoverageBanner } from "./coverage-banner";
 import { DetailPane, type Asked, type Tab } from "./pane";
@@ -65,6 +66,10 @@ export function Workspace({
   // in the pane, so moving the selection away and back shows it again
   // without a second click: a cache nobody can feel is not a cache.
   const [answers, setAnswers] = useState<ReadonlyMap<string, Asked>>(new Map());
+  // Ask replaces the pane without touching the selection, so stepping out of
+  // it lands on whatever was selected, and the conversation waits here.
+  const [askOpen, setAskOpen] = useState(false);
+  const conversation = useConversation(analysisId);
   const [reanalysing, startReanalyse] = useTransition();
   const [reanalyseError, setReanalyseError] = useState<string | null>(null);
 
@@ -281,33 +286,52 @@ export function Workspace({
         </div>
       </main>
 
-      <aside aria-label="Details" className="min-h-0 border-l border-border bg-surface">
-        <DetailPane
-          name={name}
-          summary={summary}
-          labelNote={result.labelNote ?? null}
-          insights={insights}
-          insightsOpen={insightsOpen}
-          onInsightsOpen={setInsightsOpen}
-          categories={base.categories}
-          file={file}
-          folder={folder}
-          tab={tab}
-          onTab={setTab}
-          reach={{ direction, found: reached }}
-          onReach={setDirection}
-          onGo={goToFile}
-          onClear={clear}
-          explanation={{
-            asked: answerKey ? answers.get(answerKey) : undefined,
-            onExplain: explain,
-            known,
-            onGoFolder: goToFolder,
-            onReanalyse: reanalyse,
-            reanalysing,
-            reanalyseError,
-          }}
-        />
+      <aside aria-label={askOpen ? "Ask" : "Details"} className="min-h-0 border-l border-border bg-surface">
+        {askOpen ? (
+          <AskPane
+            name={name}
+            conversation={conversation}
+            selected={
+              selection?.kind === "file"
+                ? { kind: "file", path: selection.path }
+                : selection?.kind === "group" && selection.dir !== "."
+                  ? { kind: "folder", path: selection.dir }
+                  : null
+            }
+            known={known}
+            onGo={goToFile}
+            onGoFolder={goToFolder}
+            onClose={() => setAskOpen(false)}
+          />
+        ) : (
+          <DetailPane
+            name={name}
+            summary={summary}
+            labelNote={result.labelNote ?? null}
+            insights={insights}
+            insightsOpen={insightsOpen}
+            onInsightsOpen={setInsightsOpen}
+            categories={base.categories}
+            file={file}
+            folder={folder}
+            tab={tab}
+            onTab={setTab}
+            reach={{ direction, found: reached }}
+            onReach={setDirection}
+            onGo={goToFile}
+            onClear={clear}
+            explanation={{
+              asked: answerKey ? answers.get(answerKey) : undefined,
+              onExplain: explain,
+              known,
+              onGoFolder: goToFolder,
+              onReanalyse: reanalyse,
+              reanalysing,
+              reanalyseError,
+            }}
+            askToggle={<AskToggle on={false} onToggle={() => setAskOpen(true)} />}
+          />
+        )}
       </aside>
     </HoverContext.Provider>
   );

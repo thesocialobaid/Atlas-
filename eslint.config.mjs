@@ -24,6 +24,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // What mda and the LangGraph dev server generate from the agent project.
+    "deep-agent/.mda/**",
+    "deep-agent/.langgraph_api/**",
   ]),
 ]);
 

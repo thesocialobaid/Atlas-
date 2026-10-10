@@ -59,6 +59,8 @@ type Props = {
   onClear: () => void;
   labelNote: string | null;
   explanation: ExplanationProps;
+  /** Switches the whole pane into Ask; shown in every header, selection or not. */
+  askToggle: ReactNode;
 };
 
 export function DetailPane(props: Props) {
@@ -86,6 +88,7 @@ export function DetailPane(props: Props) {
             </TabButton>
           ))}
         </div>
+        {props.askToggle}
         <button
           type="button"
           onClick={onClear}
@@ -150,7 +153,7 @@ function TabButton({ id, tab, onTab, children }: { id: Tab; tab: Tab; onTab: (t:
 // ---------------------------------------------------------------------------
 // Nothing selected: the repository as a whole. The pane's resting state.
 
-function Overview({ name, summary, labelNote, insights, insightsOpen, onInsightsOpen, categories, onGo }: Props) {
+function Overview({ name, summary, labelNote, insights, insightsOpen, onInsightsOpen, categories, onGo, askToggle }: Props) {
   const { importsBy } = summary;
   const importParts = [
     [importsBy.resolved, "to a file in this repository"],
@@ -161,10 +164,11 @@ function Overview({ name, summary, labelNote, insights, insightsOpen, onInsights
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-11 shrink-0 items-center border-b border-border px-3">
-        <h2 className="truncate font-mono text-xs font-medium" title={name}>
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pr-1 pl-3">
+        <h2 className="min-w-0 flex-1 truncate font-mono text-xs font-medium" title={name}>
           {name}
         </h2>
+        {askToggle}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <dl className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 gap-y-1.5 px-3 py-3 text-xs">
@@ -794,7 +798,7 @@ function FreshnessNote({ freshness, props }: { freshness: Freshness | "checking"
 }
 
 /** The model's prose: paragraphs, bullets, inline code and bold, with every repository path a link. */
-function Prose({ text, known, onGo, onGoFolder }: { text: string; known: Known; onGo: Go; onGoFolder: Go }) {
+export function Prose({ text, known, onGo, onGoFolder }: { text: string; known: Known; onGo: Go; onGoFolder: Go }) {
   const blocks = renderProse(text, known);
   const parts = (list: Inline[]): ReactNode =>
     list.map((p, i) => {
