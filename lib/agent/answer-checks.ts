@@ -65,8 +65,7 @@ function prose(text: string): string {
     .replace(/\S+\.[a-z]{1,5}\b/gi, " ");
 }
 
-function found(text: string, patterns: readonly RegExp[]): string[] {
-  const body = prose(text);
+function found(body: string, patterns: readonly RegExp[]): string[] {
   const hits = new Set<string>();
   for (const p of patterns) for (const m of body.matchAll(new RegExp(p.source, "gi"))) hits.add(m[0].toLowerCase());
   return [...hits];
@@ -93,14 +92,19 @@ const HEDGES: readonly RegExp[] = [
   /\bin (?:a|many) (?:typical|standard) (?:project|codebase|setup)\b/,
 ];
 
-// The agent's own machinery. Instructions forbid naming any of it.
-const PLUMBING: readonly RegExp[] = [
+// The lookups' own names, checked against the whole answer: backticks are
+// exactly how the agent would write one, and no repository path matches them.
+const TOOL_NAMES: readonly RegExp[] = [
   /\banalysis_summary\b/,
   /\bsearch_files\b/,
   /\bfiles_by_role\b/,
   /\bfile_neighbours\b/,
   /\bwalk_imports\b/,
   /\blist_routes\b/,
+];
+
+// The agent's own machinery, in prose. Instructions forbid naming any of it.
+const PLUMBING: readonly RegExp[] = [
   /\btools?\b/,
   /\blook-?ups?\b/,
   /\bfunction calls?\b/,
@@ -116,8 +120,8 @@ const PLUMBING: readonly RegExp[] = [
   /\bI(?:'m| am) (?:an? )?(?:AI|agent|language model|assistant)\b/,
 ];
 
-export const hedges = (answer: string) => found(answer, HEDGES);
-export const plumbing = (answer: string) => found(answer, PLUMBING);
+export const hedges = (answer: string) => found(prose(answer), HEDGES);
+export const plumbing = (answer: string) => [...new Set([...found(answer, TOOL_NAMES), ...found(prose(answer), PLUMBING)])];
 
 export type Scored = AgentTurn & {
   /** At least one lookup was made for this question. */

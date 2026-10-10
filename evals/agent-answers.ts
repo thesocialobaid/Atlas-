@@ -99,27 +99,28 @@ function report(projectName: string, days: number, turns: Traced[], runs: number
 
 /** Each check catches what's planted for it, and nothing in a clean answer. */
 function plant(base: Traced | undefined): boolean {
-  const clean: AgentTurn = base?.turn.answer
-    ? base.turn
-    : {
-        question: "where is authentication handled?",
-        lookups: [{ tool: "search_files", ok: true }],
-        answer: "The analysis shows `lib/auth.ts`, imported by 4 files. Sign-in tokens are read in `app/api/auth/route.ts`.",
-      };
+  // Ordinary repository talk, auth words included, that no check may flag.
+  const fixed: AgentTurn = {
+    question: "where is authentication handled?",
+    lookups: [{ tool: "search_files", ok: true }],
+    answer: "The analysis shows `lib/auth.ts`, imported by 4 files. Sign-in tokens are read in `app/api/auth/route.ts`.",
+  };
+  const clean: AgentTurn = base?.turn.answer ? base.turn : fixed;
   console.log(base?.turn.answer ? `Planting into run ${base.runId}.` : "No traced answers yet; planting into a fixed one.");
 
   const cases: { name: string; turn: AgentTurn; caught: (s: Scored) => boolean }[] = [
     { name: "a hedge", turn: { ...clean, answer: `${clean.answer} This is probably where sessions are checked.` }, caught: (s) => s.hedged.includes("probably") },
     { name: "a named lookup", turn: { ...clean, answer: `The search_files tool returned this. ${clean.answer}` }, caught: (s) => s.plumbing.includes("search_files") },
+    { name: "a named lookup in backticks", turn: { ...clean, answer: `I called \`walk_imports\` for this. ${clean.answer}` }, caught: (s) => s.plumbing.includes("walk_imports") },
     { name: "a credential", turn: { ...clean, answer: "The analysis credential has expired, so nothing can be read." }, caught: (s) => s.plumbing.includes("analysis credential") },
     { name: "no lookup", turn: { ...clean, lookups: [] }, caught: (s) => !s.looked },
   ];
 
   let ok = true;
-  const before = score(clean);
-  // A real answer may already carry a flag; that's for the report to show. The
-  // fixed one must be clean, or the checks are flagging ordinary repository talk.
-  if (!base?.turn.answer && (before.hedged.length > 0 || before.plumbing.length > 0)) {
+  // Checked on every run, whatever was planted into: a real answer may carry a
+  // flag of its own, which is for the report to show, but this one must not.
+  const before = score(fixed);
+  if (before.hedged.length > 0 || before.plumbing.length > 0) {
     console.log(`  FLAGGED a clean answer: ${[...before.hedged, ...before.plumbing].join(", ")}`);
     ok = false;
   }
